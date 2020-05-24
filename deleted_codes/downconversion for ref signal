@@ -1,0 +1,147 @@
+void downconvert_ref_signal(int32c* ref_signal_dc, int16c *cpy, int32c* refsig_time, long int f0, long int B, int Nvals)
+{
+    Ndc_baseband=Nvals/dc_factor;  // Compute number of baseband values 
+    Ndc_passband=Ndc_baseband*dc_factor; // Compute number of passband values 
+    printString("Ndc_passband is  ");printInt(Ndc_passband);printEL();
+    printString("Ndc_baseband is  ");printInt(Ndc_baseband);printEL();
+
+    int Ncpy=Nbpad_dcfilt+Ndc_passband+Nfwpad_dcfilt; 
+    // Nvals values loaded from the buffer, converted to complex format
+    // this gleaning operation is replaced by the padding operation
+    // Number of extracted values in cpy
+    
+    // prepad the ref singal for later use
+    int i=0;
+    int isave;
+    printString("==========================================================\\"
+    "===============================================================\\"
+    "==========================================");printEL();
+    printString("##START_ADC_CPY##");printEL();
+    for(isave=0;isave<Ncpy;isave++)
+    { // prepad values for later use
+        if(isave<Nbpad_dcfilt)
+        {
+            cpy[isave].re = 0; // pad zeros for ref signal
+            cpy[isave].im = 0;
+//            printDouble(cpy[isave].re);printDelim();printEL();
+//            printDouble(cpy[isave].re);printDelim();printEL();
+        } else if ((isave>=Nbpad_dcfilt)&&(isave<(Ndc_passband+Nbpad_dcfilt)))
+        {
+            cpy[isave].re = refsig_time[i].re;
+            cpy[isave].im = refsig_time[i].im;
+//            printDouble(cpy[isave].re);printDelim();printEL();
+//            printDouble(cpy[isave].im);printDelim();printEL();
+            i++;
+        } else if (isave>=(Ndc_passband+Nbpad_dcfilt)&&isave<Ncpy)
+        {
+            cpy[isave].re = 0;
+            cpy[isave].im = 0;
+//            printDouble(cpy[isave].re);printDelim();printEL();
+//            printDouble(cpy[isave].im);printDelim();printEL();
+        }
+        printLongInt(cpy[isave].re);printDelim();printEL();
+        printLongInt(cpy[isave].im);printDelim();printEL();
+    }
+    printString("##END_ADC_CPY##");printEL();
+    printString("==========================================================\\"
+    "===============================================================\\"
+    "==========================================");printEL();
+
+    /*// Remove bias (not needed because of down conversion where DC is filtered)
+    int32_t mean=sum_16c_real(cpy,Ncpy)/Ncpy; // Sum over real part (adc values)
+    for (i=0;i<Ncpy;i++){
+        cpy[i].re=cpy[i].re-mean;
+    }*/
+
+    // Downshift all values
+    int32c ref_dc_vals[Ncpy];
+    mult_complex_arr(ref_dc_vals,cpy,dc_exponential,Ncpy);
+    // Rescale previous operation (needed in order to avoid overflow)
+    rescale_complex2max_int32c(ref_dc_vals,Ncpy,RESCALE_FXP); // 5us/sampl @ 160e3
+
+    printString("==========================================================\\"
+    "===============================================================\\"
+    "==========================================");printEL();
+    printString("##START_ADC_SHI##");printEL();
+    for (i = 0;i<Ncpy;i++)
+    {
+        printLongInt(ref_dc_vals[i].re);printDelim();printEL();
+        printLongInt(ref_dc_vals[i].im);printDelim();printEL();
+    }
+    printString("##END_ADC_SHI##");printEL();
+    printString("==========================================================\\"
+    "===============================================================\\"
+    "==========================================");printEL();
+    
+    // Low pass filter (on pre&post padded buffer slice)
+    int32c ref_dc_vals_lpfilt[Ndc_passband];
+    conv_prepadded_32c(ref_dc_vals_lpfilt,Ndc_passband,ref_dc_vals,lpfilt,Ntaps_dcfilt);
+
+    printString("==========================================================\\"
+    "===============================================================\\"
+    "==========================================");printEL();
+    printString("##START_ADC_LP##");printEL();
+    for (i = 0;i<Ndc_passband;i++)
+    {
+        printLongInt(ref_dc_vals_lpfilt[i].re);printDelim();printEL();
+        printLongInt(ref_dc_vals_lpfilt[i].im);printDelim();printEL();
+    }
+    printString("##END_ADC_LP##");printEL();
+    printString("==========================================================\\"
+    "===============================================================\\"
+    "==========================================");printEL();
+    
+    // Resample 
+    downsample_overwrite_int32c(ref_dc_vals_lpfilt,Fs,dc_Fs,Ndc_passband);
+//    downsample_yl_overwrite_int32c(ref_dc_vals_lpfilt,dc_index, Fs,dc_Fs,Ndc_passband);
+
+    // Note: If programmer has wrecked correct functionality with 
+    // dc_factor: Ndc_baseband should equal Ndc and 
+    // Ndc_passband should equal floor(Fs/B)*Ndc, where Ndc equals
+    // last value of loop variable inside downsample_overwrite_int32c().
+    
+    // Rescale filtered output (needed in order to avoid overflow)
+    rescale_complex2max_int32c(ref_dc_vals_lpfilt,Ndc_baseband,RESCALE_FXP);
+
+    printString("==========================================================\\"
+    "===============================================================\\"
+    "==========================================");printEL();
+    printString("##START_DC_BUFFER##");printEL();
+    for (i = 0;i<Ndc_baseband;i++)
+    {
+        printLongInt(ref_dc_vals_lpfilt[i].re);printDelim();printEL();
+        printLongInt(ref_dc_vals_lpfilt[i].im);printDelim();printEL();
+    }
+    printString("##END_DC_BUFFER##");printEL();
+    printString("==========================================================\\"
+    "===============================================================\\"
+    "==========================================");printEL();
+    // Save downconverted result 
+//    int16c ref_signal_dc[Ncpy];
+//    printString("Here comes the downconverted signal");printEL();
+    
+//    for (i=0;i<Ndc_baseband;i++){
+//        ref_signal_dc[i].re=(int32_t)ref_dc_vals_lpfilt[i].re;
+//        ref_signal_dc[i].im=(int32_t)ref_dc_vals_lpfilt[i].im;
+//        printDouble(ref_signal_dc[i].re);printDelim();printEL();
+//        printDouble(ref_signal_dc[i].im);printDelim();printEL();
+//    }
+//    printString("Here is the end of downconverted data"); printDelim(); printEL();
+
+    // testing ----------------------------------------------------------
+//    printString("testing comes here");printEL();
+//    for (i=0;i<Ndc_baseband;i++){
+//        //printInt(cpy[i].re); printDelim(); printEL();
+//        //printLongInt(dc_vals_lpfilt[i].re); printDelim(); printLongInt(dc_vals_lpfilt[i].im); printDelim(); printEL();
+//        printDouble(ref_signal_dc[i].re); printDelim(); printEL(); 
+//        printDouble(ref_signal_dc[i].im); printDelim(); printEL();
+//
+//    }
+//    printString("HELLO WORLD");
+    /*for (i=0;i<Ncpy;i++){
+        //printInt(cpy[i].re); printDelim(); printEL();
+        printLongInt(dc_vals_lpfilt[i].re); printDelim(); printLongInt(dc_vals_lpfilt[i].im); printDelim(); printEL();
+    }*/
+    //
+//    printString("End of downconversion");
+}

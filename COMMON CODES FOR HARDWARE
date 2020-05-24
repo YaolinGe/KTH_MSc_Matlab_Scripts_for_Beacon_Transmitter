@@ -1,0 +1,8 @@
+most commonly used combination
+
+
+printString("Here comes the adc_buffer");printDelim();printEL();
+printString("==========================================================\\"
+"===============================================================\\"
+"==========================================");printEL();
+

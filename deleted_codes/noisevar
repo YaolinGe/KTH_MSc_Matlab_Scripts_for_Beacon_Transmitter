@@ -1,0 +1,48 @@
+
+//int32_t calculate_noisevar(int N){ //only mean, not the variance
+//    // Calculate noise variance over N values in the noise buffer
+//    int i;     
+//    int32_t res=0; int cnt=0;
+//    for (i=0;i<N;i++){
+//        if(i+1>noisevar_buffer_cnt){
+//            break; // Not enough values in noise buffer
+//        }
+//        res=res+noisevar_buffer[i];
+//        cnt++; 
+//    }
+//    return res/cnt; // the mean value of the noise buffer
+//}
+
+//int N_noiseavg_over_time(double time, int Nframe, long int Fs_){
+//    // Number of samples required to average over the requested time
+//    // if noise averages are done over Nframe values
+//    int32_t Nsamples=(int32_t)(time*Fs_); 
+//    int Navg=(int)( 1 + (Nsamples/Nframe) ); // Ceil on calculation (>0)
+//    
+//    if(Navg>threshold_buffer_len){
+//        Navg=threshold_buffer_len;
+//    }
+//    return Navg;
+//}
+
+//void fill_noisvar_buffer(double time, int Nframe, long int Fs_){
+//    int Nframes=N_noiseavg_over_time(time, Nframe, Fs_);
+//
+//    start_sampling(Fs_,.5);
+//    int i,j; int32_t avg;
+//    for (i=0;i<Nframes;i++){
+//        acquire_samples(Nframe);
+//        int16_t* p=unload_adc_buffer(Nframe,0,0);
+//        avg=0;
+//        // Calculate mean
+//        int16_t mean=(int16_t)(sum_16_t(p,Nframe)/Nframe);
+//        int16_t tmp;
+//        for (j=0;j<Nframe;j++){
+//            tmp=p[j]-mean; // Remove mean
+//            avg=avg+((int32_t)tmp)*tmp; // Calculate variance
+//        }
+//        avg=avg/Nframe;
+//        insert_threshold_into_buffer(avg);
+//    }
+//    stop_sampling();
+//}

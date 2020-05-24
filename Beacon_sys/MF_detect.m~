@@ -1,0 +1,4 @@
+function [ind] = MF_detect(yref, y_dc)
+%% [ind] = MF_detect
+
+end % MF_detect

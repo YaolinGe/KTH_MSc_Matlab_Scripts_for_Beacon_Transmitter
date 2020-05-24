@@ -1,0 +1,1145 @@
+// debug function -- Yaolin
+
+//int32_t * padded_adc_buffer(int32_t * p, int T, int G, int N, int numOfNframes, int32_t *overlapsaved_values)
+//{
+//    int Nvals = N + T + G;
+//    int32_t padded_adc_buffer[Nvals];
+//    int i;
+//        if (numOfNframes==1)
+//        {
+//            for(i=0;i<Nvals;i++)
+//            {
+//                if(i<T+G)
+//                     padded_adc_buffer[i] = 0;
+//                else
+//                     padded_adc_buffer[i] = p[i-T-G];
+//            }
+//        }
+//        else
+//        {
+//             for(i=0;i<Nvals;i++)
+//             {
+//                 if(i<T+G)
+//                     padded_adc_buffer[i] = overlapsaved_values[i];
+//                 else
+//                     padded_adc_buffer[i] = p[i-T-G];
+//             }
+//        }    
+//    return padded_adc_buffer;
+//}
+
+
+
+
+// calculate the thresholds based on cell-averaging CFAR technique -- Yaolin
+//int32_t Threshold_CA_CFAR(int T, int G, int16_t offset)
+//{        
+//    int Nbpad = T + G;
+//    int16_t * p = unload_adc_buffer(1, Nbpad, 0); // extract data from the buffer
+//    
+//    int16_t noise_samples[T];
+//    int i;
+//    print_start_mark("NOISE");
+//    for (i=0;i<T;i++)
+//    {
+//        noise_samples[i] = p[i];
+//        printInt(noise_samples[i]); printDelim();printEL();
+//    }
+//    print_end_mark("NOISE");
+//
+//    int16_t noise_level = (int16_t)(sum_16_t(noise_samples, T) / T);
+//    int32_t threshold = noise_level * offset;
+//
+//    return threshold;
+////    print_start_mark("ADC_BUFFER");
+//    int i;
+//    for (i = 0;i<Nbpad+1;i++)
+//    {
+//        printInt(p[i]); printDelim(); printEL();
+//    }
+//    print_end_mark("ADC_BUFFER");
+    
+    
+//    int numOfNframes = 0;    
+//    int16_t overlapsaved_values[T+G];
+//    
+//    int i;
+//    int Nsample = get_adc_buffer_len();
+//
+//    int Nvals = Nsample + T + G; // vector length of the padded vector
+//    
+//     while(Nframes--)
+//     {
+//         transfer_data_from_storage_to_adc_buffer();
+//        
+//        numOfNframes++;
+//        int16_t padded_adc_buffer[Nvals];
+//        int16_t * p = unload_adc_buffer(Nsample, 0, 0);
+//
+//        if (numOfNframes==1)
+//        {
+//            for(i=0;i<Nvals;i++)
+//            {
+//                if(i<T+G)
+//                     padded_adc_buffer[i] = 0;
+//                else
+//                     padded_adc_buffer[i] = p[i-T-G];
+//            }
+//        }
+//        else
+//        {
+//             for(i=0;i<Nvals;i++)
+//             {
+//                 if(i<T+G)
+//                     padded_adc_buffer[i] = overlapsaved_values[i];
+//                 else
+//                     padded_adc_buffer[i] = p[i-T-G];
+//             }
+//        }
+//
+//        for(i = 0;i<T+G;i++) overlapsaved_values[i] = p[Nsample-T-G+i]; //save the last T+G values from previous block
+//
+////        printString("##START_ADC_PADDED##");printEL();
+////        for(i=0;i<Nvals;i++)
+////        {
+////            printInt(padded_adc_buffer[i]);printDelim();printEL();
+////        }
+////        printString("##END_ADC_PADDED##");printEL();
+//        
+//        int32_t *threshold = Threshold_CA_CFAR(padded_adc_buffer, T, G, offset);
+//        printString("calculation is okay "); printEL();
+//        
+//        for (i = 0;i<Nsample;i++)
+//            Thresholds[i+(numOfNframes-1)*Nsample] = threshold[i];
+//        printString("threshold is calculated correctly");printEL();
+//    }
+//    return thresholds;
+}
+
+// calculate the thresholds based on cell-averaging CFAR technique -- Yaolin
+//int32_t * DC_Thresholds_CA_CFAR(int Nframes, int T, int G, int offset)
+//{         
+//    int numOfNframes = 0;    
+//    int32_t overlapsaved_values[T+G];
+//
+//    long int fcenter=47000;
+//    long int B=5000;
+////    int dc_factor = get_dc_factor();
+//    setup_downconversion(fcenter,B); 
+//    printString("Downconversion setup is done, good luck");printEL();
+//
+//    int i;
+//    int Nsample = get_adc_buffer_len();
+//    int32_t Thresholds[Nframes*Nsample];
+//    
+//     while(Nframes--)
+//     {
+//        for(i=0;i<Nsample;i++)
+//            insert_val_into_adcbuffer((int16_t)read_from_storage());
+//
+//        downconvert_adc_buffer(Nsample);
+//        
+//        int Nbase_band = get_Ndc_baseband();
+//        numOfNframes++;
+//        
+//        int32c * dc_adc_buffer = get_dc_vals_lpfilt();
+//        int32_t dc_amp[Nbase_band];
+//        for (i = 0;i<Nbase_band;i++)
+//        {
+//            dc_amp[i] = abs_32c(dc_adc_buffer[i]); 
+//            printLongInt(dc_amp[i]); printDelim(); printEL();
+//        }
+//        
+//        int32_t * padded_buffer = padded_adc_buffer(dc_amp, T, G, Nbase_band, numOfNframes, overlapsaved_values);
+//        
+//        for(i = 0;i<T+G;i++) overlapsaved_values[i] = dc_amp[Nbase_band-T-G+i]; //save the last T+G values from previous block
+//
+//        printString("##START_ADC_PADDED##");printEL();
+//        for(i=0;i<Nbase_band+T+G;i++)
+//        {
+//            printInt(padded_buffer[i]);printDelim();printEL();
+//        }
+//        printString("##END_ADC_PADDED##");printEL();
+//        
+//        int32_t *threshold = Threshold_CA_CFAR(padded_buffer, T, G, offset);
+//        printString("calculation is okay "); printEL();
+//        
+//        for (i = 0;i<Nsample;i++)
+//            Thresholds[i+(numOfNframes-1)*Nsample] = threshold[i];
+//        printString("threshold is calculated correctly");printEL();
+//    }
+//    return Thresholds;
+//}
+
+//int32_t Threshold_CA_CFAR(int16_t* p, int T, int G, int offset)
+//{
+//    int i,j;
+//    int Nsample = get_adc_buffer_len();
+//    int Nvals = Nsample + T + G;
+//    
+//    int32_t noise_samples[T];
+//    for(i = G+T; i<Nvals; i++)
+//    {
+//        for(j=0;j<T;j++)
+//            noise_samples[j] = p[i+j-T-G]; // acquire values from adc buffer to calculate lagging noise
+//        int16_t noise_level = (int16_t)(sum_16_t(noise_samples, T)/T);
+//        int32_t threshold = noise_level * offset;
+//    }
+//    return threshold;
+//}
+
+// calculate the threshold based on cell variance CFAR technique -- Yaolin
+//int32_t * Threshold_CV_CFAR(int16_t* p, int T, int G, int offset)
+//{
+//    int i,j;
+//    int Nsample = get_adc_buffer_len();
+//    int Nvals = Nsample + T + G;
+//    int16_t *sig_samples, *noise_samples;
+//    int16_t mean, tmp;
+//    int32_t *threshold_CV_CFAR;
+//    int32_t avg = 0;
+//
+//    // prepad zeros so that no clipping will happen
+//    for (i=0;i<Nvals;i++)
+//    {
+//        if (i<T+G)
+//            sig_samples[i] = 0;
+//        else
+//            sig_samples[i] = p[i-T-G]; // append values from start
+//    }
+//        
+//    // find the average value of the noise data
+//    for(i = G+T; i<Nvals; i++)
+//    {
+//        for(j=0;j<T;j++)
+//            noise_samples[j] = sig_samples[i-T-G];
+//        
+//        mean=(int16_t)(sum_16_t(noise_samples,T)/T);
+//        avg = 0;
+//        for (j=0;j<T;j++){
+//            tmp=noise_samples[j]-mean; // Remove mean
+//            avg=avg+((int32_t)tmp)*tmp; // Calculate variance
+//        }
+//        avg=avg/T;
+//        
+//        int16_t noise_level = (int16_t)sqrt(avg);
+//        int32_t threshold = noise_level * offset;
+//        threshold_CV_CFAR[i-G-T] = threshold;
+//    }
+//    return threshold_CV_CFAR;
+//}
+
+// used to find the positions of those exceedances -- Yaolin
+//void test_adapted_thresholding(int Nframes)
+//{
+//    long int Fs = get_Fs();
+//    start_sampling(Fs,.5);
+//    int Nsample=get_adc_buffer_len();
+//    int Nframe = Nsample / 2;
+//    int numOfExceedance = 0;
+//    while(Nframes--)
+//    {
+//        acquire_samples(Nframe);
+////        print_adc_buffer_valcnt(); //------- test mark
+//        
+//        // THREHOLDS FROM DIFFERENT METHODS
+//        numOfExceedance += adapted_thresholding(Nframe);
+//        print_val("numof Exceednace is ", numOfExceedance);
+//        
+////        print_adc_buffer_valcnt(); //------- test mark
+//
+//    }
+//    
+//    transmit_storage_vector();
+//    print_val("# of exceedances is ", numOfExceedance);
+//    stop_sampling();
+//}
+
+
+
+==========================================
+
+//int16c* unload_adc_buffer_complex(int Nvals, int Nbpad, int Nfwpad){
+//    // Set the time of the oldest value loaded from the buffer, which is
+//    // adc_buffer_valcnt samples before the time of the latest sample 
+//    t_buffer.clk=t_latest_sample.clk - sampl2clk(adc_buffer_valcnt,Fs);
+//
+//    // Glean Nbpad values, then unload Nvals from buffer, then glean Nfwpad vals
+//    // Pad with gleaned previous values
+//    int i; 
+//    int isave=0;
+//    int iglean=Nbpad;
+//    for(i=0;i<Nbpad;i++){
+//        adc_buffer_cpyc[isave].re=glean_val_from_adcbuffer(-iglean);
+//        adc_buffer_cpyc[isave].im=0;
+//        isave++;
+//        iglean--;
+//        // Break if clipping the buffer
+//        if(isave>=adc_bufferlen){
+//            buffer_cpy_clip_flag=1; 
+//            break;
+//        }
+//    }
+//    // Unload values from ADC buffer
+//    for(i=0;i<Nvals;i++){
+////        adc_buffer_cpyc[isave].re=(int16_t)read_val_from_adcbuffer();
+////        printString("test here");printEL();
+////        printString("the index is "); printInt(isave);printDelim();printEL();
+////        printString("the oldest index is "); printInt(get_index_adcbuffer_oldest());printDelim();printEL();
+//        isave++;
+//        adc_buffer_cpyc[isave].re = (int16_t)read_val_from_adcbuffer();
+//        adc_buffer_cpyc[isave].im = 0;
+////        printInt(adc_buffer_cpyc[isave].re);printDelim();printEL();
+////        printInt(adc_buffer_cpyc[isave].im);printDelim();printEL();
+////        printString("te?st ends here");printEL();
+////        printInt(read_val_from_adcbuffer()); printDelim();printEL();
+////        printInt(adc_buffer_cpyc[isave].re); printDelim();printEL();
+////        printInt(get_index_adcbuffer_oldest()); printDelim();printEL();
+//        // Break if clipping the buffer
+//        if(isave>=adc_bufferlen){
+//            buffer_cpy_clip_flag=1; 
+//            break;
+//        }
+//    }
+//    // Pad with forward values
+//    iglean=0; // First value to glean forward is the next unloaded sample
+//    for(i=0;i<Nfwpad;i++){
+//        adc_buffer_cpyc[isave].re=glean_val_from_adcbuffer(iglean);
+//        adc_buffer_cpyc[isave].im=0;
+//        isave++;
+//        iglean++;
+//        // Break if clipping the buffer
+//        if(isave>=adc_bufferlen){
+//            buffer_cpy_clip_flag=1; 
+//            break;
+//        }
+//    }
+//    return adc_buffer_cpyc;
+//}
+
+
+
+
+
+===========================================
+void test_debug_r(void)
+{
+//        printString("debug receiver mode is on"); printEL();
+//        clear_storage();
+//        printString("hello, I am listening now");printEL();
+//// ========================= START OF TEST OF REF SIGNAL DC=====================
+//        long int fcenter=47000;
+//        long int B=5000;
+//        setup_downconversion(fcenter,B);
+//        printString("Downconversion setup is done, good luck");printEL();
+//        
+//        int i;
+////        int np = get_np(); // Number of pulses
+//        int np = 100; // Number of pulses
+//        int Fs = get_Fs();
+//        double waveform[NFFT];
+//        double waveform_w[NFFT];   // what is waveform_w?
+//
+//        // Set         //double dt = 1 / (double) Fs;
+//        int fc = get_frequency(); 
+//        double Tp = 1 / (double)fc;
+//        double Tpulse = Tp*np; // One wave period
+//        double Npulse = Tpulse*Fs; // Total number of points in the pulse
+//        //waveform to zero
+//        memset(waveform, 0, sizeof (waveform));
+//        memset(waveform_w, 0, sizeof (waveform_w));
+//        
+//        // Get arrays holding input time signal, and output frequency spectrum 
+//        // of the reference signal
+//        int32c* refsig_time = get_refsig_time();
+//        int32c* refsig_freq = get_refsig_freq();
+//        
+//        if(get_wave_select()==SINE){
+//            printString("wave select is the sine wave and going correctly");
+//            generate_sine(waveform, fc, Fs, Tpulse, NFFT);
+//            generate_sine(waveform_w, fc, Fs, Tpulse, NFFT);
+//            generate_sine(waveform, fc, Fs, Tpulse, Npulse);
+//            generate_sine(waveform_w, fc, Fs, Tpulse, Npulse);
+//        }
+    //double Np = Tpulse*Fs; // Total number of points in the pulse
+    //printString("generating square np="); printInt((int) (T*frequency)); printEL();
+
+        // Reformat to double precision floating-point number multiplied by 
+        // an exponent of 2 (for the format used in the fft function)
+//        printString("==========================================================\\"
+//        "===============================================================\\"
+//        "==========================================");printEL();
+//        printString("##START_ADC_BUFFER##");printEL();
+//        for (i = 0; i < Npulse; i++) {
+//            refsig_time[i].re = (int32_t)ldexp(waveform_w[i], INT_EXPONENT); //INT_EXPONENT
+//            refsig_time[i].im = 0; 
+//            printDouble(refsig_time[i].re); printDelim();printEL();
+//        }
+//        printString("##END_ADC_BUFFER##");printEL();
+//        printString("==========================================================\\"
+//        "===============================================================\\"
+//        "==========================================");printEL();
+//        printString("Npulse is "); printInt(Npulse);printEL();
+//
+//        int32c* scratch32 = get_scratch32();
+//        int32c* twiddles32 = get_twiddles32();
+//        // Calculate frequency response of reference signal
+//        printString("Here comes the downconverted version");printEL();
+//
+//        DSP_TransformFFT32(refsig_freq, refsig_time, twiddles32, scratch32, LOG2NFFT);
+//
+//        int16c cpy[NFFT];
+//        int32c* ref_signal_dc;
+//        
+//        printString("==========================================================\\"
+//        "===============================================================\\"
+//        "==========================================");printEL();
+////        printString("##START_DC_BUFFER##");printEL();
+//         downconvert_ref_signal(ref_signal_dc, cpy, refsig_time, fc, get_bandwidth(), Npulse);
+////        printString("##END_DC_BUFFER##");printEL();
+//        printString("==========================================================\\"
+//        "===============================================================\\"
+//        "==========================================");printEL();
+// ========================== END OF TEST OF REF SIGNAL DC=====================
+//        int Nframe=NFFT-2*Npulse; 
+//        int framestart=Npulse;      // Start and end of the frame
+//        //int frameend=Npulse+Nframe; // (last index is the value before this one)
+//        int frameend=framestart+Nframe; // (last index is the value before this one)
+        // Get arrays for holding intermediate complex fixed-point data results 
+        // in the fft  
+        // Npulse values at start and end of the frame are not valid 
+        // in the correlation sequence
+
+        // Get arrays holding input time signal, and output frequency spectrum 
+        // of the reference signal
+
+        // Create correlation holder   
+//        int32c* ctime=get_ctime();
+//        int32c* cfreq=get_cfreq();
+//        // Create pointers for the reverse-unfolded buffer, and its freq response
+//        int32c* buff_time;
+//        int32c* buff_freq = get_buff_unf_freq();
+//        int32_t cmax=0; // Maximum recorded correlation
+//        int32_t fre;    // Real part of correlation
+        
+//        T2CONbits.TON = 1; // Activate sampling timer 
+        //int flip=0;
+//        while(1){
+//           if(get_adc_buffer_valcnt()>=Nframe){
+
+//                int t0=TMR4;
+//               // Keep track of how many values have been sampled while 
+//               // detector is processing the last frame
+//                set_adc_buffer_valcnt(0);
+//                // Unfold buffer in reversed order
+//                buff_time=fwunfold_bufftime_FFT(NFFT);
+//                // FFT of buffer
+//                DSP_TransformFFT32(buff_freq, buff_time, twiddles32, scratch32, LOG2NFFT);
+//                // Correlate
+//                correlate(cfreq, refsig_freq, buff_freq, framestart, frameend);
+//                // Inverse transform
+//                DSP_TransformFFT32(ctime, cfreq, twiddles32, scratch32, LOG2NFFT);
+//
+//                // Calculate thresholds
+//                double hold=0; int variancenum=0;
+//                int16_t cval;    
+//                int p;
+//                for (p=framestart; p<frameend;p++){
+//                    cval=ctime[p].re;
+//                    hold=hold+((double)cval)*((double)cval);
+//                    variancenum++;
+//                }
+//           }
+//        }
+//        printString("I am done listening");printEL();
+        
+        // ========================== test of puring listening ==================
+//        setTransducerToSensing();
+//        listen_yl();
+//        start_sampling((long int)DEFAULT_SAMPLING_FREQUENCY,.5);
+//        int Nframe=get_adc_buffer_len();
+//        int Nframes = 6;
+//        int j;
+//        while(Nframes--)
+//        {
+//            acquire_samples(Nframe); // wait until i have Nframe samples inside adc buffer
+//            int16_t* p=unload_adc_buffer(Nframe,0,0);
+//            for (j=0;j<Nframe;j++)
+//            {
+//                printInt(p[j]);printDelim();printEL();
+//            }
+//        }
+//        stop_sampling();
+//        listen_yl();
+        
+        //======================= end of puring listening ======================
+        
+   
+       
+// ================== Test of raw listening ====================================
+       
+//        setTransducerToSensing();
+//        int i;    
+//        ADCCON3bits.VREFSEL = 1;
+//        ADCCON1bits.ON = 1;
+//        ADCCSS1bits.CSS15 = 0; //AN15 (Class 3) quit scanning
+//        ADCCSS1bits.CSS18 = 1; //AN18 (Class 3) set for scan
+//        ADCCON3bits.GSWTRG = 1;
+//        int t_pulsestart = get_t_pulsestart();
+//        int t_startdetector=TMR4; 
+//        int Nframes = 10;
+//        int Nframe = get_adc_buffer_len();
+//        int raw_ADC_len = Nframes * Nframe;
+//        for (i=0; i<raw_ADC_len; i++){
+////        raw_ADC[i] = ADCDATA18;
+//            printInt(ADCDATA18);printDelim();printEL();
+//            ADCCON3bits.GSWTRG = 1;
+//        }   
+//        set_deadtime((double)(t_startdetector-t_pulsestart)/FCY);
+    
+// ====================== end of raw listening =================================
+       
+	 
+        printString("I am done listening");printEL();
+}
+
+
+
+=====================================================
+void test_exceedance(void)
+{
+    // calculate the noise threshold
+//    int T = 100;
+//    int G = 50;
+//    int offset = 3;
+//    //            printString("CFAR calculation is setup properly"); printEL();
+//
+//    int32_t * threshold = Threshold_CA_CFAR(p, T, G, offset); // cell averaging sliding window
+//
+//    //            int32_t * threshold = Threshold_CV_CFAR(p, T, G, offset); // cell variance sliding window
+//    printString("Threshold is calculated"); printEL();
+//    a1 = get_adc_buffer_valcnt();
+//    printString("The calculated adc buffer index is ");printInt(a1);printEL();
+//         
+//         print_start_mark("ADC_THRESHOLD");
+//            for (i=0;i<Nsample;i++)
+//            {
+//                printLongInt(threshold[i]); printDelim();printEL();
+//            }   
+//         print_end_mark("ADC_THRESHOLD");
+            
+//            for (i=0;i<Nsample;i++)
+//            {
+////                printLongInt(p[i]); printDelim();printEL();
+////                a = p[i];
+//                if (p[i]>=threshold[i])
+//                {
+//                    exceedance = 1;
+//                    printString("The exceedance happened ");printInt(exceedance);printEL();
+//                    break;
+//                }
+//            }
+
+//            a2 = get_adc_buffer_valcnt();
+//            printString("The current adc buffer index is ");printInt(a2);printEL();
+
+//            if (exceedance)
+//            {
+//                numOfExceed++;
+////                t1.clk = get_time_clk();
+////                int16_t* q=unload_adc_buffer(Nsample,0,0);
+////                valcnt = get_adc_buffer_valcnt();
+////                printString("The number of values in the adc buffer is  "); printInt(valcnt);printEL();
+//            a2 = get_adc_buffer_valcnt();
+//            printString("before insert buffer index is ");printInt(a2);printEL();
+//            for (i=0;i<Nsample;i++)
+//            {
+////                printInt(q[j]);printDelim();printEL();
+//                insert_into_storage(p[i]);
+////                insert_into_storage(threshold[i]);
+//
+////                printInt(m[j]);printDelim();printEL();
+//            }
+//            a2 = get_adc_buffer_valcnt();
+//            printString("after insert adc buffer index is ");printInt(a2);printEL();  
+////                t2.clk = get_time_clk();
+////                printString("The sample insertion processing takes "); 
+////                printDouble(clk2sec(t2.clk-t1.clk)); printString("seconds"); printEL();
+//            }
+//            else
+//            {
+//                clear_buffer();
+//            }
+
+//            int16_t* m = get_adc_buffer();
+//            printString("==========================================================\\"
+//                    "===============================================================\\"
+//                    "==========================================");printEL();
+//            printString("##START_ADC_BUFFER##");printEL();
+
+//            printString("##END_ADC_BUFFER##");printEL();
+//            printString("==========================================================\\"
+//                "===============================================================\\"
+//                "==========================================");printEL();
+//            printString("Oldest index is"); printInt(get_index_adcbuffer_oldest());printDelim();printEL();
+//            int16_t* l=unload_adc_buffer(Nsample,0,0);
+//            set_index_adcbuffer_oldest(0);
+//            printString("Oldest index is"); printInt(get_index_adcbuffer_oldest());printDelim();printEL();
+//            printString("##TEST_ADC_BUFFER##");printEL();
+//            for (j=0;j<Nsample;j++)
+//            {
+//                printInt(l[j]);printDelim();printEL();
+//            }
+//            printString("##END_TEST_BUFFER##");printEL();
+            
+//            printString("==========================================================\\"
+//            "===============================================================\\"
+//            "==========================================");printEL();
+//            printString("##START_DC_BUFFER##");printEL();
+
+//            downconvert_adc_buffer(Nsample);
+//                int32c* p=get_dc_vals_lpfilt();
+//                for (j=0;j<get_Ndc_baseband();j++){
+//    //                insert_into_storage( p[j].re*p[j].re 
+//    //                        + p[j].im*p[j].im ); // dc value (abs^2)
+//                    printLongInt(p[j].re*p[j].re 
+//                            + p[j].im*p[j].im);printDelim();printEL();
+//                }
+//            printString("##END_DC_BUFFER##");printEL();
+//            printString("==========================================================\\"
+//            "===============================================================\\"
+//            "==========================================");printEL();
+//        }
+//        stop_sampling();
+
+//        printString("The number of exceedances is ");printInt(numOfExceed);printEL();
+                    
+//        printString("==========================================================\\"
+//                "===============================================================\\"
+//                "==========================================");printEL();
+//        printString("##START_ADC_BUFFER##");printEL();
+//        transmit_storage_vector_N(Nsample);
+//        printString("##END_ADC_BUFFER##");printEL();
+//        printString("==========================================================\\"
+//            "===============================================================\\"
+//            "==========================================");printEL();
+//            a2 = get_adc_buffer_valcnt();
+//            printString("The current adc buffer index is ");printInt(a2);printEL();
+//        printString("The dc_factor is"); printDouble(get_dc_factor());printEL();
+//        printString("==========================================================\\"
+//        "===============================================================\\"
+//        "==========================================");printEL();
+//        printString("##START_DC_BUFFER##");printEL();
+//        
+//        downconvert_adc_buffer(get_load_num());
+//            int32c* p=get_dc_vals_lpfilt();
+//            for (j=0;j<get_Ndc_baseband();j++){
+////                insert_into_storage( p[j].re*p[j].re 
+////                        + p[j].im*p[j].im ); // dc value (abs^2)
+//                printDouble(p[j].re*p[j].re 
+//                        + p[j].im*p[j].im);printDelim();printEL();
+////                printDouble(p[j].re);printDelim();printEL();
+////                printDouble(p[j].im);printDelim();printEL(); 
+//            }
+//        printString("##END_DC_BUFFER##");printEL();
+//        printString("==========================================================\\"
+//        "===============================================================\\"
+//        "==========================================");printEL();
+
+// ===================== end of listening function =============================
+
+}
+
+
+===================================
+void test_delay(void)
+{
+//// ===================== start delay function =============================== 
+//    long int fcenter=47000;
+//    long int B=5000;
+//    setup_downconversion(fcenter,B);
+//    printString("Downconversion setup is done, good luck");printEL();
+//
+//    TMR4 = 0;
+//    Time t1, t2;
+//    t1.clk = get_time_clk();
+//    printString("The current time is ")
+//    delaymicro_yl(1000000);
+//    t2.clk = get_time_clk();
+//    double t = clk2sec(t2.clk - t1.clk);
+//    printString("The 129000000 clock cycles corresponds to "); printDouble(t);printEL();
+//    int a = 10;
+//    int b = 3;
+//    int c = 3.9;
+//
+//    int a = (int)( ((float)6)/2 + .5)-1;
+//    printString("The output is ");printInt(a);printEL();
+//    int valcnt = get_adc_buffer_valcnt();
+//    printString("The number of values in the adc buffer is  "); printInt(valcnt);printEL();
+//
+//    t1.clk = get_time_clk();
+//    start_sampling((long int)DEFAULT_SAMPLING_FREQUENCY,.5);
+//    t2.clk = get_time_clk();
+//    printString("The sampling processing takes "); 
+//    printDouble(clk2sec(t2.clk-t1.clk)); printString("seconds"); printEL();
+//    //        
+//    t1.clk = get_time_clk();
+//    valcnt = get_adc_buffer_valcnt();
+//    t2.clk = get_time_clk();
+//    printString("The number of values in the adc buffer is  "); printInt(valcnt);printEL();
+//    printString("The sampling processing takes "); 
+//    printDouble(clk2sec(t2.clk-t1.clk)); printString("seconds"); printEL();
+//    cmnd_load_file();
+//    printString("Let's download the storage vector to compare"); printDelim();printEL();
+//    printString("index_oldest is "); printInt(get_index_adcbuffer_oldest());printEL();
+//    printString("index_nextsampl is "); printInt(get_index_adcbuffer_nextsampl());printEL();
+//    printString("index_valcnt is "); printInt(get_adc_buffer_valcnt());printEL();
+//    printString("index_len is "); printInt(get_adc_buffer_len());printEL();
+//    printString("index_oldest is "); printInt(get_load_num());printEL();
+//
+//    int i; 
+//    int Nsample=get_adc_buffer_len();
+//    int Nsample=get_storage_vector_len();
+//    valcnt = get_adc_buffer_valcnt();
+//    printString("The number of values in the adc buffer is  "); printInt(valcnt);printEL();
+//    int Nframes = 1;
+//    int j;
+//    int numOfExceed = 0;
+//    int i;
+//    int a1, a2;
+//    int a;
+//
+//    printString("Ready to calculate the threshold"); printEL();
+//    while(Nframes--)
+//    {
+//    for (i=0;i<Nsample;i++)
+//
+//    {
+//        insert_val_into_adcbuffer((int16_t)read_from_storage());
+//    //                printInt(read_val_from_adcbuffer());printDelim();printEL(); 
+//    }
+//
+//    valcnt = get_adc_buffer_valcnt();
+//    printString("The number of values in the adc buffer is  "); printInt(valcnt);printEL();
+//    acquire_samples_dcpadded(Nsample); // wait until i have Nframe samples inside adc buffer
+//
+//    int exceedance = 0;
+//
+//    a1 = get_adc_buffer_valcnt();
+//    printString("The current adc buffer index is ");printInt(a1);printEL();
+//    acquire_samples(Nsample);
+//    a1 = get_adc_buffer_valcnt();
+//    printString("The 1st adc buffer index is ");printInt(a1);printEL();
+//    //            int16_t *p = get_adc_buffer();
+//    int16_t *p = unload_adc_buffer(Nsample, 0, 0);
+//    printString("adc buffer is unloaded"); printEL();
+//    a1 = get_adc_buffer_valcnt();
+//    printString("The unloaded adc buffer index is ");printInt(a1);printEL();
+//+===========================================================================++ 
+//    }
+}
+
+
+
+============================================
+void test_pulse_listen_downconversion(void)
+{
+//======================== TEST end of downsampling ============================
+
+//        int16c * p = get_adc_buffer_dc();
+//        int i;
+//        for (i=0;i<2000;i++)
+//        {
+//            printInt(p[i]);printDelim();printEL();
+//        }
+//        printString("ADC buffer value");
+//        
+////       a1[i]=get_adc_buffer_valcnt();
+//        downconvert_adc_buffer(200);
+//        transmit_storage_vector();
+////
+////        printString("I want to know what the current index in the storage vector");
+////        printEL();
+////        printInt(get_Nstored());
+////        printEL();
+////        printInt(get_storage_windex());        printEL();
+////        printInt(get_storage_rindex());        printEL();
+//        printString("Check down");
+//        transmit_storage_vector();
+//        stop_sampling();
+////        transmit_storage_vector(); // Uncomment to download storage vector   
+//        printString("everything is okay"); printEL();
+//        printString("Hope best wishes");printEL();
+//
+//        acquire_samples_forget(get_Nbpad_dcfilt());
+//        init_adc_buffer();
+//
+////         Some algorithm real time trackers
+//        int Nframes = 200;
+//        int Nsamples = 200;
+////        Loop variables
+//        int j;
+//        for(i=0;i<Nframes;i++){
+////             Sampling in passband ------
+//            /*acquire_samples(Nsamples);
+//            a1[i]=get_adc_buffer_valcnt();
+//            p=unload_adc_buffer(Nsamples,0,0);
+//            a2[i]=get_adc_buffer_valcnt();
+//            for (j=0;j<Nsamples;j++){
+//                insert_into_storage( (int32_t) p[j] ); // normal value
+//                printLongInt(p[j]);printDelim(); printEL();
+//            }*/
+//
+////             Sampling in baseband -------
+//            acquire_samples_dcpadded(Nsamples);
+////            a1[i]=get_adc_buffer_valcnt();
+//            downconvert_adc_buffer(Nsamples);
+////            a2[i]=get_adc_buffer_valcnt();
+//            int32c* p=get_dc_vals_lpfilt();
+//            for (j=0;j<get_Ndc_baseband();j++){
+//                insert_into_storage( p[j].re*p[j].re 
+//                        + p[j].im*p[j].im ); // dc value (abs^2)
+//            }
+//
+////             end ------
+////            a3[i]=get_adc_buffer_valcnt();
+//        }
+//        stop_sampling();
+//        transmit_storage_vector();
+
+ //===============================================================================
+
+//        a2[i]=get_adc_buffer_valcnt();
+//        int j;
+//        int32c* p=get_dc_vals_lpfilt();
+//        for (j=0;j<get_Ndc_baseband();j++)
+//        {
+//            insert_into_storage( p[j].re*p[j].re 
+//                    + p[j].im*p[j].im ); // dc value (abs^2)
+//        }
+//        transmit_storage_vector();
+        
+//        //Sampling in baseband -------
+//        acquire_samples_dcpadded(Nsamples);
+//        a1[i]=get_adc_buffer_valcnt();
+//        downconvert_adc_buffer(Nsamples);
+//        a2[i]=get_adc_buffer_valcnt();
+//        int32c* p=get_dc_vals_lpfilt();
+//        for (j=0;j<get_Ndc_baseband();j++){
+//            insert_into_storage( p[j].re*p[j].re 
+//                    + p[j].im*p[j].im ); // dc value (abs^2)
+//        }
+//        
+        // Uncomment this to sample from storage vector:
+        //set_Mode_debug(TRUE);
+
+        // For checking timeout in an algorithm ---
+
+        // Initiate timeout 
+        
+//        reset_algorithm_timeout();
+//        set_algorithm_timeout(1);
+        // Check if timeout
+//        check_algorithm_timeout();
+        
+//        long int fcenter=47000;
+//        long int B=5000;
+//        int good_framelen=(NFFT/(DEFAULT_SAMPLING_FREQUENCY/B))*(DEFAULT_SAMPLING_FREQUENCY/B);
+////        
+////        // Example: Sample good_framelen values over 8 frames (2160*8 values))
+//        int Nframes=8;
+//        int Nsamples=good_framelen; // works well with 180e3 to 10e3 dc
+//        setup_downconversion(fcenter,B);
+//
+//        // Average for noise variance estimation
+//        double noise_estimate_time=0.1; // [s]
+//        fill_noisvar_buffer(noise_estimate_time,840,(long int)DEFAULT_SAMPLING_FREQUENCY);
+//        int32_t nest=calculate_noisevar(get_noisevar_buffer_cnt()); // variance 
+//        printString("Number of noise estimates: "); 
+//        printInt(get_noisevar_buffer_cnt()); printEL();
+//        printString("Noise standard deviation: ");
+//        printDouble(sqrt((double)nest));
+//        printEL();
+        
+        // Transmitting a pulse 
+//        int np = (int) (fcenter/((double)B) );
+//        voltage=200;
+//        set_startdelay(750);
+        
+//        send_square_pulse(np, fcenter, voltage);
+//        init_adc_buffer();
+        
+//        if(get_wave_select()==SINE){
+//            send_square_pulse(np, frequency, voltage);
+//        } else if(get_wave_select()==CHIRP){
+//            send_chirp_pulse(np,voltage,frequency,bandwidth);
+//        }
+        // Start sampling ---------------------------
+        
+//        setTransducerToSensing();
+//
+//        start_sampling((long int)DEFAULT_SAMPLING_FREQUENCY,.5);
+////        
+////        // Default behaviour: always pre-sample enough for using 
+////        // the set lp-filter in the downconversion algorithm, 
+////        // at the start of usage.
+//        acquire_samples_forget(get_Nbpad_dcfilt());
+//        
+//        // Test over some time period (Nframes*Nsamples).
+//        // Can be changed by using a while(1) loop and the algorithm
+//        // timeout functions (to make it run for a long time). 
+// 
+////         Some algorithm real time trackers
+//        int a1[Nframes];int a2[Nframes]; int a3[Nframes];
+////         Loop variables
+//        int i,j; 
+////
+//        for(i=0;i<Nframes;i++){
+//            // Sampling in passband ------
+////            acquire_samples(Nsamples);
+////            a1[i]=get_adc_buffer_valcnt();
+////            int16_t* p=unload_adc_buffer(Nsamples,0,0);
+////            a2[i]=get_adc_buffer_valcnt();
+////            for (j=0;j<Nsamples;j++){
+////                insert_into_storage( (int32_t) p[j] ); // normal value
+//                //printLongInt(p[j]);printDelim(); printEL();
+////            }
+//
+//            // Sampling in baseband -------
+//            acquire_samples_dcpadded(Nsamples);
+//            
+//            print_adc_buffer();
+//            
+//            a1[i]=get_adc_buffer_valcnt();
+//            
+//            downconvert_adc_buffer(Nsamples);
+//            
+//            a2[i]=get_adc_buffer_valcnt();
+//            
+//            int32c* p=get_dc_vals_lpfilt();
+//            for (j=0;j<get_Ndc_baseband();j++){
+//                insert_into_storage( p[j].re*p[j].re 
+//                        + p[j].im*p[j].im ); // dc value (abs^2)
+//            }
+//
+//            // end ------
+//            a3[i]=get_adc_buffer_valcnt();
+//        }
+//        
+//        stop_sampling();
+        
+//         Transmit storage vector (download saved values)
+//        print_start_mark("DC_BUFFER");
+//        transmit_storage_vector(); // Uncomment to download storage vector
+//        print_end_mark("DC_BUFFER");
+
+}
+
+=========================================
+
+//void test_debug(void)
+//{
+
+//        clear_storage();
+//        clear_storage_dc();
+//        clear_buffer();
+//        
+//        set_index_adcbuffer_nextsmpl(get_adc_buffer_len()); // learned from the result, each time put it at the end to prepare to receive the next sample
+//        set_index_adcbuffer_oldest(0); // put it at the begining, so to initialise the following insert operation
+////        printString("hello, I am listening now"); printEL();
+//// // ======================= test of received signal downsampling ===============
+//        cmnd_load_file();
+//        transfer_data_from_storage_to_adc_buffer();
+//        printString("Let's download the storage vector to compare"); printDelim();printEL();
+//        printInt(get_index_adcbuffer_oldest());printEL();
+//        printInt(get_index_adcbuffer_nextsampl());printEL();
+//        printInt(get_adc_buffer_valcnt());printEL();
+//        printInt(get_adc_buffer_len());printEL();
+//        printInt(get_load_num());printEL();
+//        set_startdelay(1000);
+//        set_wave_select(SINE);
+//        if(get_wave_select()==SINE){
+//            send_square_pulse(np, frequency, voltage);
+//        } else if(get_wave_select()==CHIRP){
+//            send_chirp_pulse(np,voltage,frequency,bandwidth);
+//        }
+
+//        Time tlisten;
+//        Time tpulse;
+//        tpulse.clk=get_t_pulsestart();
+//        tlisten.clk=get_time_clk();
+////        listen_yl(); // listen to fulfill the entire storage vector
+//        printEL();
+//        printString("Time elapsed is "); printDouble(clk2sec(tlisten.clk-tpulse.clk));printEL();
+//
+////        int Nsamples = get_adc_buffer_len();
+////        int N = get_load_num();
+//        test_load_file_downconvert_adc_buffer();
+//        listen_dc();
+//            test_downconvert_adc_buffer();  
+//        int Nframes = (int) N/Nsamples;
+//        (Nframes==0)?1:Nframes; // make sure Nframes is a valid value
+//        Nframes++;
+        
+//        printString("Nframs is"); printInt(Nframes); printEL();
+        
+//        printString("Here is the testing adc buffer ");printEL();
+//        transmit_storage_vector();
+//        printString("End of the storage_vector"); printEL();
+
+//        for(i=0;i<Nframes;i++){
+//            for (j=0;j<Nsamples;j++)
+//            {
+//                insert_val_into_adcbuffer((int16_t)read_from_storage());
+//            }
+//            printString("The index of read is "); printInt(get_storage_rindex()); printEL();
+//            printString("The index of write is "); printInt(get_storage_windex()); printEL();
+
+//            insert_into_storage()
+//            int16_t *q = unload_adc_buffer(Nsamples, 0, 0);
+
+//            for (j = 0;j<Nsamples;j++)
+//            {
+//                insert_into_storage((int32_t) q[i]);
+//            }
+            
+//            printString("The dc_factor is"); printDouble(get_dc_factor());printEL();
+//        printString("==========================================================\\"
+//                "===============================================================\\"
+//                "==========================================");printEL();
+//        printString("##START_ADC_BUFFER##");printEL();
+//        
+//        for(j=0;j<Nsamples;j++)
+//        {
+//            printInt(q[j]); printDelim(); printEL();
+//        }
+//        
+//        printString("##END_ADC_BUFFER##");printEL();
+//        printString("==========================================================\\"
+//        "===============================================================\\"
+//        "==========================================");printEL();
+        
+
+//            downconvert_adc_buffer(Nsamples);
+//            int32c* p=get_dc_vals_lpfilt();
+//            int Nbase = get_Ndc_baseband();
+//            for (j=0;j<Nbase;j++){
+//                insert_into_storage_dc(p[j].re*p[j].re + p[j].im*p[j].im); // dc value (abs^2)
+//            }
+//            // end for
+//        }
+
+            
+        //timeout = (int) Fs*(2*((double)max_range)/soundspeed); 
+        //double dt = 1 / (double) Fs;
+        //        if(get_wave_select()==SINE){
+//            send_square_pulse(np, frequency, voltage);
+//        } else if(get_wave_select()==CHIRP){
+//            send_chirp_pulse(np,voltage,frequency,bandwidth);
+//        } 
+//        start_sampling((long int)DEFAULT_SAMPLING_FREQUENCY,.5);
+//        int Nframe=get_adc_buffer_len();
+//        int Nframes = 100;
+//        int j;
+//        while(Nframes--)
+//        {
+//            acquire_samples(Nframe); // wait until i have Nframe samples inside adc buffer
+//            int16_t* p=unload_adc_buffer(Nframe,0,0);
+//            for (j=0;j<Nframe;j++)
+//            {
+//                printInt(p[j]);printDelim();printEL();
+//            }
+//        }
+//        stop_sampling();
+////        listen_yl();
+    
+    
+        //======================================================================
+    
+        // To check time of the algorithm (no value should be larger than a1)
+//        printString("Use these to check run time of the algo; a2&a3 should never be larger than a1"); printEL();
+//        for (i=0;i<Nframes;i++){
+//            printString("a1: "); printInt(a1[i]); printEL();
+//        }
+//        for (i=0;i<Nframes;i++){
+//            printString("a2: "); printInt(a2[i]); printEL();
+//        }
+//        for (i=0;i<Nframes;i++){
+//            printString("a3: "); printInt(a3[i]); printEL();
+//        }
+//        printString("good framelen "); printInt(good_framelen); printEL();
+
+//        if(get_wave_select()==SINE){
+//            send_square_pulse(np, frequency, voltage);
+//        } else if(get_wave_select()==CHIRP){
+//            send_chirp_pulse(np,voltage,frequency,bandwidth);
+//        }
+//        int N = get_storage_vector_len();
+//        listen_yl();
+        
+        
+//        Time t1, t2;
+//        t1.clk = get_time_clk();
+////        printString("The current time is ")
+//        delaymicro_yl(1000000);
+//        t2.clk = get_time_clk();
+//        double t = clk2sec(t2.clk - t1.clk);
+//        printString("The 129000000 clock cycles corresponds to "); printDouble(t);printEL();
+//        int a = 10;
+//        int b = 3;
+//        int c = 3.9;
+
+//        int a = (int)( ((float)6)/2 + .5)-1;
+//        printString("The output is ");printInt(a);printEL();
+//}
+
+
+==========================================
+
+//
+//int32c * rescale_maxC(int32c* p, int32_t scale, int len)
+//{
+//    int maxp = 0;
+//    int32c tmp;
+//    int i;
+//    for (i = 0;i<len;i++)
+//    {
+//        if(p[i].re<0)
+//            tmp.re = -p[i].re;
+//        else
+//            tmp.re = p[i].re;
+//        if(p[i].im<0)
+//            tmp.im = -p[i].im;
+//        else
+//            tmp.im = p[i].im;
+//        if(tmp.re>maxp)
+//            maxp = tmp.re;
+//        if(tmp.im>maxp)
+//            maxp = tmp.im;
+//    }
+//    if (maxp > scale)
+//    {
+//        for (i = 0;i<len;i++)
+//        {
+//            p[i].re = (int32_t) p[i].re * scale / maxp;
+//            p[i].im = (int32_t) p[i].im * scale / maxp;
+//        }
+//    }
+//    return p;
+//}
+
+===================================
+
+
+
+
+
+
+
+
+
+
+
+
+  
+	   

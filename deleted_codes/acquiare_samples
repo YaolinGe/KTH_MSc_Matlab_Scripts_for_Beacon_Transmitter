@@ -1,0 +1,18 @@
+/*void acquire_sample(void){
+    // Wait for next sampled value
+    while (new_sampl != 1) {
+        sampl_timeout_inc();
+        // Check for sampling timeout error
+        if (sampl_timeout_cnt > sampl_timeout) {
+            // Timeout from sampling not working
+            IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+            T2CONbits.ON = 0; //stop pulse out timer
+            
+            // Additionally print a specific warning to higher system
+            printMessage(MSG_TIMEOUT_SAMPLING);
+            return;
+        }
+        Nop();
+    }
+    set_new_sampl(FALSE);
+}*/       

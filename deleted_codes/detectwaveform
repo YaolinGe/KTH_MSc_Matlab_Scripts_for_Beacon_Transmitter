@@ -1,0 +1,1231 @@
+/**
+void detectEchoMatchedFilter(void) {
+    
+//    int Nsamples_lastframe=0;
+//    Time keepers
+    int t0=0; int t1=0; int tdiff=0; double time;
+    
+    // Reset value counter
+    set_adc_buffer_valcnt(0);
+    // Reset "new_value" flag
+    set_new_sampl(FALSE);
+    
+    int Nthresholds=DEFAULT_NTHRESHOLDS;
+    int32_t stdthresholds[Nthresholds]; // Vector for holding thresholds for one NFFT frame
+    
+    T2CONbits.TON = 0; // Disable sampling timer
+    IFS0bits.T2IF = 0; // Clear the timer interrupt status flag
+    IEC0bits.T2IE = 1; // Enable interrupt for Timer2
+    IPC2bits.T2IP = 1; // Set priority 1
+    T2CONbits.TCKPS = 0b000;
+
+    // Configure timer so that it will sample at Fs Hz
+    if ((Fs > FCY / 0xFFFF) && (Fs < FCY)) {
+        // Sampling close to MCU clock is risky because depending on the number 
+        // of clock cycles the interrupt takes, it might not be able to finish 
+        // before the next interrupt.
+        PR2 = (int) ((float) FCY / Fs);
+    } else {
+        printString("Can not sample lower than 0xFFFF Hz by only using the "
+                "period register PR2 for Timer2. Implement a function (here) "
+                "using the prescaler register "
+                "T2CONbits.TCKPS = 0bXXX; !");
+        printEL();
+    }
+
+    // Change some transistors on the board so that the transducer is connected
+    // to an input amplifier (converting the transducer into a hydrophone)
+    setTransducerToSensing();
+
+    ADCCON3bits.VREFSEL = 1;
+    ADCCON1bits.ON = 1;
+    ADCCSS1bits.CSS15 = 0; //AN15 (Class 3) quit scanning
+    ADCCSS1bits.CSS18 = 1; //AN18 (Class 3) set for scan
+    ADCCON3bits.GSWTRG = 1;
+        
+    int32_t t_pulsestart = (int32_t) get_t_pulsestart();
+    int32_t t_maxc = 0;
+    int32_t t_first=0;
+    int32_t t_last=0;
+    
+    int detection = 0;
+    //timeout = (int) Fs*(2*((double)max_range)/soundspeed); 
+    int Fs = get_Fs();
+    double dt = 1 / (double) Fs;
+    // Npulse values at start and end of the frame are not valid 
+    // in the correlation sequence
+    int Nframe=NFFT-2*Npulse; 
+    int framestart=Npulse;      // Start and end of the frame
+    //int frameend=Npulse+Nframe; // (last index is the value before this one)
+    int frameend=framestart+Nframe; // (last index is the value before this one)
+
+    // Get arrays for holding intermediate complex fixed-point data results 
+    // in the fft  
+    int32c* scratch32 = get_scratch32();
+    int32c* twiddles32 = get_twiddles32();
+    // Get arrays holding input time signal, and output frequency spectrum 
+    // of the reference signal
+    //int32c* refsig_time = get_refsig_time();
+    int32c* refsig_freq = get_refsig_freq();
+    // Create correlation holder   
+    int32c* ctime=get_ctime();
+    int32c* cfreq=get_cfreq();
+    // Create pointers for the reverse-unfolded buffer, and its freq response
+    int32c* buff_time;
+    int32c* buff_freq = get_buff_unf_freq();
+    int32_t cmax=0; // Maximum recorded correlation
+    int32_t fre;    // Real part of correlation
+    // Allocate loop variables
+    int j=0;
+    int q=0;
+    int ii_locmax=0;
+    int ii_loc_first_trig=0;
+    int ii_loc_last_trig=0;
+    // Count number of correlation values processed
+    int32_t ii_corrproc=0; 
+    
+    int t_frame_end=0;
+    // Reset echo timeout
+    set_alg_timeout(0);
+    // Reset sampling timeout
+    //set_sampl_timeout(0);
+    // Keep track of execution time for the algorithm
+    //int show_time=1;
+    // Keep track of the detector is running during reverberation from element
+    int reverb_flag=1; // Flag during reverberation
+    int thrscale=thrscale_reverb;
+    int t_startdetector=TMR4;
+    int32_t Nreverb = (int32_t) ((t_transducer_suppression - ((double)t_startdetector-(double)t_pulsestart)/FCY )*Fs + Npulse);
+    int ii_th=0; // Keep track of where to recalculate the mean
+    int Nmean=NFFT/Nthresholds;     
+    
+    t_startdetector=TMR4; // Important to update this 
+    T2CONbits.TON = 1; // Activate sampling timer 
+    //int flip=0;
+    while(1){   
+
+        // Check for detection timeout
+        if (get_alg_timeout() > timeout) {
+            // Timeout from no echo
+            IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+            T2CONbits.ON = 0; //stop pulse out timer
+            printMessage(MSG_TIMEOUT_DETECTION);
+            goto label_EndDetection;
+        }
+
+        // Wait for next sampled value
+        while (get_new_sampl() != 1) {
+            sampl_timeout_inc();
+            // Check for sampling timeout error
+            if ( get_sampl_timeout_cnt() > timeout_sampl) {
+                // Timeout from sampling not working
+                IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+                T2CONbits.ON = 0; //stop pulse out timer
+                printMessage(MSG_TIMEOUT_SAMPLING);
+                goto label_EndDetection;
+            }
+            Nop();
+        }
+        set_new_sampl(FALSE);
+               
+       // When the NFFT:th value has been sampled, t_frame_end holds the time 
+       // when the last value was sampled
+       t_frame_end=TMR4; // Time of the end of frame
+       if(get_adc_buffer_valcnt()>=Nframe){
+           
+           //if(show_time==1){
+               // For measuring the time it takes to run the algorithm
+            t0=TMR4;
+           //}
+           // Keep track of how many values have been sampled while 
+           // detector is processing the last frame
+            set_adc_buffer_valcnt(0);
+            //valcnt=0;   
+
+            // Unfold buffer in reversed order
+            buff_time=fwunfold_bufftime_FFT(NFFT);
+
+            // FFT of buffer
+            DSP_TransformFFT32(buff_freq, buff_time, twiddles32, scratch32, LOG2NFFT);
+            //mips_fft32(buff_freq, buff_time, fftc32, scratch32, LOG2NFFT);
+  
+            // Correlate
+            correlate(cfreq, refsig_freq, buff_freq, framestart, frameend);
+
+            // Inverse transform
+            DSP_TransformFFT32(ctime, cfreq, twiddles32, scratch32, LOG2NFFT);
+            //mips_fft32(ctime, cfreq, fftc32, scratch32, LOG2NFFT);            
+            
+            // Calculate thresholds
+            calculate_thresholds32c(ctime,stdthresholds,Nthresholds,framestart,frameend,NFFT);
+
+            // First threshold value of this frame:
+            mf_detector_thr=((int32_t)stdthresholds[0])*thrscale; // Threshold for reverberation
+            //mf_detector_thr=minthresh*thrscale; // Threshold for reverberation
+            ii_th=1;
+            // Go through recorded correlation points and check if any exceedances
+            for (j=framestart; j < frameend; j++) {
+                
+                // Update threshold every NFFT/Nthresholds section 
+                if(j>=ii_th*Nmean){
+                    mf_detector_thr=stdthresholds[ii_th]*thrscale;
+                    ii_th++;
+                }
+
+                // Drop the imaginary part of the correlation, and take absolute value
+                if(ctime[j].re>0){
+                    fre = (ctime[j].re);
+                }
+                else{
+                    fre = (-ctime[j].re);
+                }
+                
+                // Temporary
+                //insert_into_storage( fre );
+                
+                // Change the weight of the threshold if outside the transducer
+                // self oscillation time period
+                if( (ii_corrproc>Nreverb) && reverb_flag==TRUE){
+                    // Use this threshold after the transducer has 
+                    // stopped oscillating
+                    thrscale=thrscale_nom;
+                    // Update threshold (on current value of ii_threcalc)
+                    mf_detector_thr=stdthresholds[ii_th-1]*thrscale;
+                    //mf_detector_thr=minthresh*thrscale; // Threshold for reverberation
+                    reverb_flag=FALSE;
+                }
+                
+                // Check if threshold is above minimum threshold 
+                // (prevent round-offs to cause zero value threshold)
+                if(mf_detector_thr<minthresh){
+                    mf_detector_thr=minthresh;
+                }
+                
+                ii_corrproc++; // Keep track of the number of samples processed
+                if(fre>mf_detector_thr){
+    
+                    // Detector triggered, load another frame
+                    while( (get_adc_buffer_valcnt()<NFFT) && (get_sampl_timeout_cnt()<timeout_sampl) ){
+                        sampl_timeout_inc();
+                        Nop();
+                    }
+                    IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+                    T2CONbits.ON = 0; //stop pulse out timer
+
+                    // ---------- END OF REAL TIME PART ------------------
+                    ii_loc_first_trig=j-framestart;         // First triggered in storage
+                    
+                    // Store the correlation values of the old frame
+                    int32_t* cs=get_corr_save(); // Pointer to correlation storage
+                    int32_t* ts=get_time_save(); // Pointer to time storage
+                    int ii_store=0;
+                    for (q=framestart; q<frameend; q++){
+                        cs[ii_store]=ctime[q].re;
+                        ts[ii_store]=buff_time[q].re;
+                        ii_store++;
+                    }
+                     
+                     // Unfold the new frame
+                    buff_time=fwunfold_bufftime_FFT(NFFT);
+                    // fft of buffer
+                    DSP_TransformFFT32(buff_freq, buff_time, twiddles32, scratch32, LOG2NFFT);
+                    // Correlate the new frame
+                    correlate(cfreq, refsig_freq, buff_freq, framestart, frameend);
+                    // Inverse transform
+                    DSP_TransformFFT32(ctime, cfreq, twiddles32, scratch32, LOG2NFFT);
+                    // Store correlation and time values for the new frame
+                    ii_store=Nframe;
+                    for (q=framestart; q<frameend; q++){
+                        cs[ii_store]=ctime[q].re;
+                        ts[ii_store]=buff_time[q].re;
+                        ii_store++;
+                    }
+
+                    // Find last triggered index
+                    int last_trig_loc=index_last_exceedence_subvector32(cs,mf_detector_thr,ii_loc_first_trig,
+                            ii_loc_first_trig+2*Npulse,get_corr_save_len());
+                    ii_loc_last_trig=last_trig_loc;
+                    
+                    // Find local maxima in correlation storage
+                    ii_locmax=index_locmax_subvector32(cs,ii_loc_first_trig,ii_loc_last_trig,get_corr_save_len());
+                    cmax=cs[ii_locmax]; // Correlation of the peak
+                    // Flag detection
+                    detection=1;
+                    // Store at what index the echo was triggered (in storage)
+                    trig_index=ii_locmax;
+                    trig_index_min=ii_loc_first_trig;
+                    trig_index_max=ii_loc_last_trig;
+                    // Calculate times
+                    int t_frame_start=t_frame_end-(int)((((double)Nframe)*dt)*FCY);
+                    // Add the time until the value with the maximum correlation
+                    t_maxc=t_frame_start+(int)((((double)(ii_locmax))*dt)*FCY)-(Tpulse*FCY);
+                    // Time when first triggered
+                    t_first=t_frame_start+(int)((((double)(ii_loc_first_trig))*dt)*FCY)-(Tpulse*FCY);
+                    // Time when last triggered
+                    t_last=t_frame_start+(int)((((double)(ii_loc_last_trig))*dt)*FCY)-(Tpulse*FCY);
+                    goto label_EndDetection;
+                }
+
+            }       
+            
+            //if(show_time==1){           
+            t1=TMR4;
+            tdiff=t1-t0;
+            //}
+            //Nsamples_lastframe=valcnt;
+        }
+
+    }
+    printString("ERROR: no pulse detected and timeout failed.");
+    printEL();
+    
+label_EndDetection:
+time=((double)tdiff)/FCY;
+set_detector_extime(time);
+time=((double)Nframe)/Fs;
+set_t_frame(time);
+        
+    
+//}
+
+// Save maximum correlation
+set_last_recorded_depth_correlation(cmax);
+// Save dead time
+deadtime=((double)(t_startdetector-t_pulsestart)/FCY)-Tpulse; // Save total deadtime used
+    
+    if (detection == 1) {
+        // set_Flag_detection(TRUE); (THIS MUST BE TESTED)
+        set_last_recorded_depth(
+                ((double) (t_maxc - t_pulsestart) / FCY)
+                    * soundspeed / 2);
+        set_depth_max(
+                ((double) (t_last - t_pulsestart) / FCY)
+                    * soundspeed / 2);
+        set_depth_min(
+                ((double) (t_first - t_pulsestart) / FCY)
+                    * soundspeed / 2);
+        consecutive_hits++;
+        consecutive_misses=0;
+    } else {
+        set_last_recorded_depth((double) NO_ECHO);
+        set_depth_min((double) NO_ECHO);
+        set_depth_max((double) NO_ECHO);
+        trig_index=-1;
+        consecutive_hits=0;
+        consecutive_misses++;
+    }
+    set_t_samplstart(t_startdetector); // Save the time when sampling was started
+    //printString("Nsamples: "); printInt(Nsamples_lastframe); printEL();
+    //printString("Nframe: "); printInt(Nframe); printEL();
+
+
+}
+
+
+void SNRatfreq(int freq){
+    // Outputs SNR at frequence every 1/NFFT
+    
+    //int Nsamples_lastframe=0;
+    // Time keepers
+    int t0=0; int t1=0; int tdiff=0; double time;
+    
+    int Fs = get_Fs();
+    
+    // Allocate loop variables
+    int j=0;  
+    //int q=0; 
+    //int k=0;
+    //int ii_locmax=0;
+    //int ii_loc_first_trig=0;
+    //int ii_loc_last_trig=0;
+    // Count number of correlation values processed
+    //int32_t ii_corrproc=0; 
+    // Reset value counter
+    set_adc_buffer_valcnt(0);
+    // Reset "new_value" flag
+    set_new_sampl(FALSE);
+    // Holder for waveform energy
+    //double wenergy=0;
+    //double wpower=0;
+    //double wpower_dB=0;
+    double SPL=0; // Sound pressure level [dB]]
+    double NL=0;  // Noise level [dB]
+    //double vrms=0;
+       
+    //int Nthresholds=10;
+    //int32_t stdthresholds[Nthresholds]; // Vector for holding thresholds for one NFFT frame
+    int32_t stdMA;
+    int ii_thr=0; // Keep track on current threshold value threshold buffer
+    // Initiate empty threshold buffer
+    for(j=0; j<NMA; j++){
+        nsigMA[j]=115;
+    }
+    //int16_t saturationscaler=1;
+
+    minthresh=10; // Just to avoid 0 threshold 
+    
+    T2CONbits.TON = 0; // Disable sampling timer
+    IFS0bits.T2IF = 0; // Clear the timer interrupt status flag
+    IEC0bits.T2IE = 1; // Enable interrupt for Timer2
+    IPC2bits.T2IP = 1; // Set priority 1
+    T2CONbits.TCKPS = 0b000;
+
+    // Configure timer so that it will sample at Fs Hz
+    if ((Fs > FCY / 0xFFFF) && (Fs < FCY)) {
+        // Sampling close to MCU clock is risky because depending on the number 
+        // of clock cycles the interrupt takes, it might not be able to finish 
+        // before the next interrupt.
+        PR2 = (int) ((float) FCY / Fs);
+    } else {
+        printString("Can not sample lower than 0xFFFF Hz by only using the "
+                "period register PR2 for Timer2. Implement a function (here) "
+                "using the prescaler register "
+                "T2CONbits.TCKPS = 0bXXX; !");
+        printEL();
+    }
+
+    // Change some transistors on the board so that the transducer is connected
+    // to an input amplifier (converting the transducer into a hydrophone)
+    setTransducerToSensing();
+
+    ADCCON3bits.VREFSEL = 1;
+    ADCCON1bits.ON = 1;
+    ADCCSS1bits.CSS15 = 0; //AN15 (Class 3) quit scanning
+    ADCCSS1bits.CSS18 = 1; //AN18 (Class 3) set for scan
+    ADCCON3bits.GSWTRG = 1;
+    
+    // Container for corresponding frequency vector to the fourier transform
+    double freqs[NFFT];
+    //int f=get_frequency();
+    int f=freq;
+    f=f+SONOTRONICS_FREQOFFSET; // Compensate for frequency offset on pinger
+    
+    int fmax=f+300; // Upper limit on frequency detection
+    int fmin=f-300; // Lower limit on frequency detection
+    // Save index for fmax and fmin and Fs/2 (aliasing point)
+    int ifmax=-1; int ifmin=-1; int iFs_half=-1;
+    int Fs_half=Fs/2;
+    for (j=0; j<NFFT;j++){
+        // Initate frequencies
+        freqs[j]= ((double)j*Fs)/NFFT;
+        if(ifmax==-1 && freqs[j]>=fmax){
+            ifmax=j;
+        }
+        if(ifmin==-1 && freqs[j]>=fmin){
+            ifmin=j;
+        }
+        if(iFs_half==-1 && freqs[j]>=Fs_half){
+            iFs_half=j;
+        }
+    }
+    // Calculate length of the pulse 
+    double Tp = 1 / (double)f;
+    int np = get_np(); // Number of pulses
+    Tpulse = Tp*np; // One wave period
+    Npulse = Tpulse*Fs; // Total number of points in the pulse
+
+
+    // Npulse values at start and end of the frame are not valid 
+    // in the correlation sequence
+    //int Nframe=NFFT-2*Npulse; 
+    int Nframe=NFFT;
+
+    // Get arrays for holding intermediate complex fixed-point data results 
+    // in the fft  
+    int32c* scratch32 = get_scratch32();
+    int32c* twiddles32 = get_twiddles32();
+    // Get arrays holding input time signal, and output frequency spectrum 
+    // of the reference signal
+    //int32c* refsig_freq = get_refsig_freq();
+    // Create pointers for the reverse-unfolded buffer, and its freq response
+    //int16_t* buff_time;
+    int32c* buff_time_fxp;
+    int32c* buff_freq_fxp = get_buff_unf_freq(); // Pointer to unfolded freq buffer
+    //int32_t cmax=0; // Maximum recorded correlation
+    //int32_t fre;    // Real part of correlation
+    
+    // Reset echo timeout
+    set_alg_timeout(0);
+    // Reset sampling timeout
+    //set_sampl_timeout(0);
+    T2CONbits.TON = 1; // Activate sampling timer 
+    //int flip=0;
+    while(1){
+
+        // Check for detection timeout
+        if (get_alg_timeout() > timeout) {
+            // Timeout from no echo
+            IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+            T2CONbits.ON = 0; //stop pulse out timer
+            printMessage(MSG_TIMEOUT_DETECTION);
+            goto label_EndDetection;
+        }
+
+        // Wait for next sampled value
+        while (get_new_sampl() != 1) {
+            sampl_timeout_inc();
+            // Check for sampling timeout error
+            if (get_sampl_timeout_cnt() > timeout_sampl) {
+                // Timeout from sampling not working
+                IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+                T2CONbits.ON = 0; //stop pulse out timer
+                printMessage(MSG_TIMEOUT_SAMPLING);
+                goto label_EndDetection;
+            }
+            Nop();
+        }
+        set_new_sampl(FALSE);
+               
+       // When the NFFT:th value has been sampled, t_frame_end holds the time 
+       // when the last value was sampled
+       //t_frame_end=TMR4; // Time of the end of frame
+       if(get_adc_buffer_valcnt()>=Nframe){
+                      
+            t0=TMR4;
+           // Keep track of how many values have been sampled while 
+           // detector is processing the last frame
+            set_adc_buffer_valcnt(0);
+            // Unfold buffer in fixed point for DSP routines, and in normal
+            // "adc" format for calculation of noise standard deviation
+            buff_time_fxp=fwunfold_bufftime_FFT(NFFT); 
+            //buff_time=fwunfold_buff(NFFT);
+        
+            
+            
+            // TESTING !!!!!!!!!!!!!!!! ------------
+            // Has no effect -- sampling is NOT the problem
+
+            // -----------------------------------
+
+            
+            // Estimate bias
+            double bias=0; // Must be double or it may overflow
+            for(j=0; j<NFFT; j++){
+                bias=bias+buff_time_fxp[j].re;
+            }
+            bias=bias/NFFT;
+            //bias=8388608;
+            // Remove bias
+            for(j=0; j<NFFT; j++){
+                buff_time_fxp[j].re=buff_time_fxp[j].re-(int32_t)bias;
+            }
+           
+            // FFT of buffer
+            DSP_TransformFFT32(buff_freq_fxp, buff_time_fxp, twiddles32, scratch32, LOG2NFFT);     
+
+            // Calculate average amplitude in the region fmin-fmax 
+            // (reduce sensitivity to small doppler shifts)
+            int ii_fval; 
+            int32_t Af_avg=0; // Store amplitude average (x NFFT)
+            //int32_t val;
+
+            //double absval;
+            int navg=ifmax-ifmin+1; // Number of averages
+            for (ii_fval=ifmin; ii_fval<=ifmax; ii_fval++){
+
+                //val=buff_freq_fxp[ii_fval].re;
+                //if(val<0){val=-val;} // abs on value
+                absval=sqrt(((double)buff_freq_fxp[ii_fval].re)*buff_freq_fxp[ii_fval].re
+                        +((double)buff_freq_fxp[ii_fval].im)*buff_freq_fxp[ii_fval].im);
+
+                Af_avg=Af_avg+((int32_t)absval)/navg; // val in fxp adc format
+            }
+            
+            Af_avg=Af_avg*NFFT;     // DSP_TransformFFT32 scales down result by NFFT
+            //printString("Af_avg (freq avg): "); printDouble((double)Af_avg); printEL();
+            
+            Af_avg=(int32_t)(Af_avg/pow(2,INT_EXPONENT)); // Scale from fxp to normal adc format (amplitude)
+            //printString("Af_avg (adc): "); printDouble((double)Af_avg); printEL();
+           
+            Af_avg=(2*Af_avg)/Npulse; // Normalise w/r pulse length and double sideband
+            //printString("Af_avg (adc amp): "); printDouble((double)Af_avg); printEL();            
+
+            double Avolt=(((double)Af_avg)/V2ADC)/AMP_GAIN; // Voltage level into adc
+            //printString("Avolt: "); printDouble((double)Avolt); printEL();
+
+            if(Avolt!=0){
+                SPL = 20*log10(Avolt) - SENSITIVITY_SONOTRONICS_OMNI; // Sound pressure level
+            }
+            else{
+                SPL=0;
+            }
+            
+            // Calculate "variance" (adc format) in the current frame and insert into storage
+            //nsigMA[ii_thr]=Af_avg;
+            nsigMA[ii_thr]=SPL; // Average on the decibel value
+            ii_thr++; 
+            if(ii_thr>=NMA){
+                ii_thr=0;
+            }
+            stdMA=0;
+            // Calculate current background noise std from moving average
+            int p;
+            for(p=0; p<NMA; p++){
+                stdMA=stdMA+nsigMA[p];
+            }
+            NL=stdMA/NMA; // Noise std in adc val format
+    
+
+            // Print noise and sound pressure level [dB]
+            printDouble(SPL); 
+            printDelim(); 
+            printDouble(NL); 
+            printDelim(); 
+            printEL();
+            
+            //printString("ii_thr: "); printInt(ii_thr); printDelim(); printEL();
+
+            t1=TMR4;
+            tdiff=t1-t0;
+        }
+
+    }
+    printString("ERROR: no pulse detected and timeout failed.");
+    printEL();
+    
+labe_lEndDetection:
+time=((double)tdiff)/FCY;
+set_detector_extime(time);
+time=((double)Nframe)/Fs;
+set_t_frame(time);
+
+    //printString("samples: "); printInt(Nsamples_lastframe); printEL();
+    
+//}
+
+// Save maximum correlation
+//set_last_recorded_depth_correlation(cmax);
+// Save dead time
+//deadtime=((double)(t_startdetector-t_pulsestart)/FCY)-Tpulse; // Save total deadtime used
+
+}
+
+void detectWaveform(void){
+      
+    //int Nsamples_lastframe=0;
+    // Time keepers
+    int t0=0; int t1=0; int tdiff=0; double time;
+    // Allocate loop variables
+    int j=0; int q=0; int k=0;
+    int ii_locmax=0;
+    int ii_loc_first_trig=0;
+    int ii_loc_last_trig=0;
+    // Count number of correlation values processed
+    int32_t ii_corrproc=0; 
+    // Reset value counter
+    set_adc_buffer_valcnt(0);
+    // Reset "new_value" flag
+    set_new_sampl(FALSE);
+    // Holder for waveform energy
+    double wenergy=0;
+    double wpower=0;
+    //double wpower_dB=0;
+    double Isound=0;
+    double vrms=0;
+       
+    int Nthresholds=10;
+    int32_t stdthresholds[Nthresholds]; // Vector for holding thresholds for one NFFT frame
+    int32_t stdthr;
+    int ii_thr=0; // Keep track on current threshold value threshold buffer
+    // Initiate empty threshold buffer
+    int l;
+    for(l=0; l<Nthresholds; l++){
+        stdthresholds[l]=100;
+    }
+    
+    minthresh=10; // Just to avoid 0 threshold 
+    
+    T2CONbits.TON = 0; // Disable sampling timer
+    IFS0bits.T2IF = 0; // Clear the timer interrupt status flag
+    IEC0bits.T2IE = 1; // Enable interrupt for Timer2
+    IPC2bits.T2IP = 1; // Set priority 1
+    T2CONbits.TCKPS = 0b000;
+
+    // Configure timer so that it will sample at Fs Hz
+    if ((Fs > FCY / 0xFFFF) && (Fs < FCY)) {
+        // Sampling close to MCU clock is risky because depending on the number 
+        // of clock cycles the interrupt takes, it might not be able to finish 
+        // before the next interrupt.
+        PR2 = (int) ((float) FCY / Fs);
+    } else {
+        printString("Can not sample lower than 0xFFFF Hz by only using the "
+                "period register PR2 for Timer2. Implement a function (here) "
+                "using the prescaler register "
+                "T2CONbits.TCKPS = 0bXXX; !");
+        printEL();
+    }
+
+    // Change some transistors on the board so that the transducer is connected
+    // to an input amplifier (converting the transducer into a hydrophone)
+    setTransducerToSensing();
+
+    ADCCON3bits.VREFSEL = 1;
+    ADCCON1bits.ON = 1;
+    ADCCSS1bits.CSS15 = 0; //AN15 (Class 3) quit scanning
+    ADCCSS1bits.CSS18 = 1; //AN18 (Class 3) set for scan
+    ADCCON3bits.GSWTRG = 1;
+    
+    // Container for corresponding frequency vector to the fourier transform
+    double freqs[NFFT];
+    int f=get_frequency();
+    int fmax=f+500; // Upper limit on frequency detection
+    int fmin=f-500; // Lower limit on frequency detection
+    // Save index for fmax and fmin and Fs/2 (aliasing point)
+    int ifmax=-1; int ifmin=-1; int iFs_half=-1;
+    int Fs_half=Fs/2;
+    for (j=0; j<NFFT;j++){
+        // Initiate frequencies
+        freqs[j]= ((double)j*Fs)/NFFT;
+        if(ifmax==-1 && freqs[j]>=fmax){
+            ifmax=j;
+        }
+        if(ifmin==-1 && freqs[j]>=fmin){
+            ifmin=j;
+        }
+        if(iFs_half==-1 && freqs[j]>=Fs_half){
+            iFs_half=j;
+        }
+    }
+    // Amplitude of maximum
+    int32_t Awave_fmax=0;
+    int iwave_fmax=0;
+    
+    int detection = 0;
+    //timeout = (int) Fs*(2*((double)max_range)/soundspeed); 
+    int Fs = get_Fs();
+    //double dt = 1 / (double) Fs;
+    // Npulse values at start and end of the frame are not valid 
+    // in the correlation sequence
+    int Nframe=NFFT-2*Npulse; 
+    int framestart=Npulse;      // Start and end of the frame
+    //int frameend=Npulse+Nframe; // (last index is the value before this one)
+    int frameend=framestart+Nframe; // (last index is the value before this one)
+    // Get arrays for holding intermediate complex fixed-point data results 
+    // in the fft  
+    int32c* scratch32 = get_scratch32();
+    int32c* twiddles32 = get_twiddles32();
+    // Get arrays holding input time signal, and output frequency spectrum 
+    // of the reference signal
+    int32c* refsig_freq = get_refsig_freq();
+    // Create correlation holder   
+    int32c* ctime=get_ctime();
+    int32c* cfreq=get_cfreq();
+    // Create pointers for the reverse-unfolded buffer, and its freq response
+    int32c* buff_time;
+    int32c* buff_freq = get_buff_unf_freq();
+    int32_t cmax=0; // Maximum recorded correlation
+    int32_t fre;    // Real part of correlation
+    
+    // Reset echo timeout
+    set_alg_timeout(0);
+    // Reset sampling timeout
+    //set_sampl_timeout(0);
+    T2CONbits.TON = 1; // Activate sampling timer 
+    //int flip=0;
+    while(1){
+
+        // Check for detection timeout
+        if (get_alg_timeout() > timeout) {
+            // Timeout from no echo
+            IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+            T2CONbits.ON = 0; //stop pulse out timer
+            printMessage(MSG_TIMEOUT_DETECTION);
+            goto label_EndDetection;
+        }
+
+        // Wait for next sampled value
+        while (get_new_sampl() != 1) {
+            sampl_timeout_inc();
+            // Check for sampling timeout error
+            if (get_sampl_timeout_cnt() > timeout_sampl) {
+                // Timeout from sampling not working
+                IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+                T2CONbits.ON = 0; //stop pulse out timer
+                printMessage(MSG_TIMEOUT_SAMPLING);
+                goto label_EndDetection;
+            }
+            Nop();
+        }
+        set_new_sampl(FALSE);
+               
+       // When the NFFT:th value has been sampled, t_frame_end holds the time 
+       // when the last value was sampled
+       //t_frame_end=TMR4; // Time of the end of frame
+       if(get_adc_buffer_valcnt()>=Nframe){
+           
+            t0=TMR4;
+           // Keep track of how many values have been sampled while 
+           // detector is processing the last frame
+            set_adc_buffer_valcnt(0);
+            // Unfold buffer in reversed order
+            buff_time=fwunfold_bufftime_FFT(NFFT);
+            // FFT of buffer
+            DSP_TransformFFT32(buff_freq, buff_time, twiddles32, scratch32, LOG2NFFT);
+            // Correlate
+            correlate(cfreq, refsig_freq, buff_freq, framestart, frameend);
+            // Inverse transform
+            DSP_TransformFFT32(ctime, cfreq, twiddles32, scratch32, LOG2NFFT);
+            
+            // Calculate thresholds
+            double hold=0; int variancenum=0;
+            int16_t cval;    
+            int p;
+            for (p=framestart; p<frameend;p++){
+                cval=ctime[p].re;
+                hold=hold+((double)cval)*((double)cval);
+                variancenum++;
+            }
+            // Calculate variance
+            // Insert standard deviation as the base threshold value
+            stdthresholds[ii_thr]=(int32_t) sqrt(hold/variancenum);
+            ii_thr++; 
+            if(ii_thr>=Nthresholds){
+                ii_thr=0;
+            }
+            stdthr=0;    
+            for(p=0; p<Nthresholds; p++){
+                stdthr=stdthr+stdthresholds[p];
+            }
+            stdthr=stdthr/Nthresholds;
+            
+            // First threshold value of this frame:
+            mf_detector_thr=stdthr*thrscale_nom; // Threshold for reverberation
+
+            // Go through recorded correlation points and check if any exceedances
+            for (j=framestart; j < frameend; j++) {
+
+                // Drop the imaginary part of the correlation, and take absolute value
+                if(ctime[j].re>0){
+                    fre = (ctime[j].re);
+                }
+                else{
+                    fre = (-ctime[j].re);
+                }
+                //printDouble((double)buff_time[j].re);printDelim();printEL();
+
+                // Check if threshold is above minimum threshold 
+                // (prevent round-offs to cause zero value threshold)
+                if(mf_detector_thr<minthresh){
+                    mf_detector_thr=minthresh;
+                }
+                
+                ii_corrproc++; // Keep track of the number of samples processed
+                
+                if(fre>mf_detector_thr){
+                    //if(fre>0){
+    
+                    // Detector triggered, load another frame
+                    while( (get_adc_buffer_valcnt()<NFFT) && (get_sampl_timeout_cnt()<timeout_sampl) ){
+                        sampl_timeout_inc();
+                        Nop();
+                    }
+                    IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+                    T2CONbits.ON = 0; //stop pulse out timer
+
+                    // ---------- END OF REAL TIME PART ------------------
+                    ii_loc_first_trig=j-framestart;         // First triggered in storage
+                    
+                    // Store the correlation values of the old frame
+                    int32_t* cs=get_corr_save(); // Pointer to correlation storage
+                    int32_t* ts=get_time_save(); // Pointer to time storage
+                    int ii_store=0;
+                    for (q=framestart; q<frameend; q++){
+                        cs[ii_store]=ctime[q].re;
+                        ts[ii_store]=buff_time[q].re;
+                        ii_store++;
+                    }
+                    
+                    // Verify frequency of the pulse
+                    // FFT of buffer
+                    //DSP_TransformFFT32(buff_freq, buff_time, twiddles32, scratch32, LOG2NFFT);
+                    // Find frequency peak in the region above DC, to Fs/2
+                    int DC_reject_index=10;
+                    for(k=DC_reject_index;k<iFs_half;k++){
+                        // Skip first values in the fft 
+                        // (they are a rest product of the bias)
+                        int32_t fre;
+                        if(buff_freq[k].re>0){
+                            // Abs value
+                            fre=buff_freq[k].re;
+                        }
+                        else{
+                            fre=-buff_freq[k].re;
+                        }
+                                
+                        if (fre>Awave_fmax){
+                            // Find maximum frequency
+                            Awave_fmax=fre;
+                            iwave_fmax=k;
+                        }
+
+                    }
+                    if( ifmin<=iwave_fmax && iwave_fmax<=ifmax  ){
+                        // Detection
+                        // Unfold the new frame
+                        buff_time=fwunfold_bufftime_FFT(NFFT);
+                        // fft of buffer
+                        DSP_TransformFFT32(buff_freq, buff_time, twiddles32, scratch32, LOG2NFFT);
+                        // Correlate the new frame
+                        correlate(cfreq, refsig_freq, buff_freq, framestart, frameend);
+                        // Inverse transform
+                        DSP_TransformFFT32(ctime, cfreq, twiddles32, scratch32, LOG2NFFT);
+                        // Store correlation and time values for the new frame
+                        ii_store=Nframe;
+                        for (q=framestart; q<frameend; q++){
+                            cs[ii_store]=ctime[q].re;
+                            ts[ii_store]=buff_time[q].re;
+                            ii_store++;
+                        }
+
+                        // Find last triggered index
+                        int last_trig_loc=index_last_exceedence_subvector32(cs,mf_detector_thr,ii_loc_first_trig,
+                                ii_loc_first_trig+2*Npulse,get_corr_save_len());
+                        ii_loc_last_trig=last_trig_loc;
+
+                        // Find local maxima in correlation storage
+                        ii_locmax=index_locmax_subvector32(cs,ii_loc_first_trig,ii_loc_last_trig,get_corr_save_len());
+                        cmax=cs[ii_locmax]; // Correlation of the peak
+                        // Flag detection
+                        detection=1;
+                        // Store at what index the echo was triggered (in storage)
+                        trig_index=ii_locmax;
+                        trig_index_min=ii_loc_first_trig;
+                        trig_index_max=ii_loc_last_trig;
+
+                        // Calculate energy 
+                        double tmean=0; double tval;
+                        int i;
+                        for(i=0;i<2*NFFT;i++){
+                            tval=(ts[i]/(double)pow(2,INT_EXPONENT));
+                            tmean=tmean+tval;
+                        }
+                        tmean=tmean/(2*NFFT);
+                        //printString("mean: "); printDouble(tmean); printEL();
+                        
+                        double holder;
+                        int Nintegrate=(int)(Npulse);
+                        int ii_pstart=trig_index-Nintegrate;
+                        if(ii_pstart<0){ii_pstart=0;}
+                        wenergy=0; // Calculate energy of received wave
+                        for(i=0; i<Nintegrate; i++){
+                            holder=(((double)ts[ii_pstart+i])/(double)pow(2,INT_EXPONENT) -tmean)/AMP_GAIN;
+                            wenergy=wenergy+holder*holder;
+                        }
+                        wpower=wenergy/Nintegrate; // Calculate power
+                        vrms=sqrt(wpower); // RMS value of voltage
+                        if(wpower!=0){
+                            Isound=10*log10(vrms/AMP_GAIN)+SENSITIVITY_SONOTRONICS_OMNI;
+                        }
+                        else{
+                            //wpower_dB=0;
+                            Isound=0;
+                        }                    
+                        goto label_EndDetection;
+                    }else{
+                        // Restart sampling
+                        IEC0bits.T2IE = 1;  // Reenable interrupt
+                        T2CONbits.ON = 1;   // Restart timer
+                    }      
+                }
+            }       
+            t1=TMR4;
+            tdiff=t1-t0;
+            //Nsamples_lastframe=valcnt;
+        }
+    }
+    printString("ERROR: no pulse detected and timeout failed.");
+    printEL();
+    
+label_EndDetection:
+time=((double)tdiff)/FCY;
+set_detector_extime(time);
+time=((double)Nframe)/Fs;
+set_t_frame(time);
+
+    //printString("samples: "); printInt(Nsamples_lastframe); printEL();
+    
+//}
+
+// Save maximum correlation
+set_last_recorded_depth_correlation(cmax);
+// Save dead time
+//deadtime=((double)(t_startdetector-t_pulsestart)/FCY)-Tpulse; // Save total deadtime used
+    
+    if (detection == 1) {
+        printString("fmax="); printDouble(freqs[iwave_fmax]); printEL();
+        set_last_sound_pressure(Isound);
+     
+    } else {
+        set_last_sound_pressure(0);
+    }
+}
+void listen(int Nlisten, int STORE) {
+    T2CONbits.TON = 0; //
+    IFS0bits.T2IF = 0; // Clear the timer interrupt status flag
+    IEC0bits.T2IE = 1; // Enable interrupt for Timer2
+    IPC2bits.T2IP = 1; // Set priority 1
+    T2CONbits.TCKPS = 0b000;
+
+    // Configure timer so that it will sample at Fs Hz
+    if ((Fs > FCY / 0xFFFF) && (Fs < FCY)) {
+        // Sampling close to MCU clock is risky because depending on the number 
+        // of clock cycles the interrupt takes, it might not be able to finish 
+        // before the next interrupt.
+        PR2 = (int) ((float) FCY / Fs);
+    } else {
+        printString("Can not sample lower than 0xFFFF Hz by only using the "
+                "period register PR2 for Timer2. Implement a function (here) "
+                "using the prescaler register "
+                "T2CONbits.TCKPS = 0bXXX; !");
+        printEL();
+    }
+
+    // Change some transistors on the board so that the transducer is connected
+    // to an input amplifier (converting the transducer into a hydrophone)
+    setTransducerToSensing();
+    // Remove noise on adc from switching the transducer
+    // to sensing mode
+    //delaymicro(MIN_INPUTSWITCH_DELAY);    // Comment this to start sampling right after pulsing
+    ADCCON3bits.VREFSEL = 1;
+    ADCCON1bits.ON = 1;
+    ADCCSS1bits.CSS15 = 0; //AN15 (Class 3) quit scanning
+    ADCCSS1bits.CSS18 = 1; //AN18 (Class 3) set for scan
+    ADCCON3bits.GSWTRG = 1;
+    
+    // &&&&&&&& Start sampling
+    set_new_sampl(FALSE);
+
+    int storage_len=get_storage_vector_len();
+    if(Nlisten>storage_len){
+        Nlisten=storage_len;
+    }
+    int buff_index = 0;
+    // Save time in order to calculate dead time between last 
+    // pulse and detector start
+    int t0 = TMR4;
+    T2CONbits.TON = 1; // Activate sampling timer 
+    //TMR4=0;
+    //int adcval;
+    int t_startdetector=TMR4;
+    int t_pulsestart=get_t_pulsestart();
+    while (buff_index <= Nlisten) {
+        if (get_new_sampl() == 1) {
+
+            set_new_sampl(FALSE);
+            buff_index++;
+        }
+
+    }
+
+    // Set correct end point of buffer after last point has been taken
+    // (buff_index gets increased after the last adc value)
+    //buff_index--;
+    IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+    T2CONbits.ON = 0; //stop pulse out timer
+
+    set_t_samplstart(t0);
+    set_new_sampl(FALSE);
+    
+    deadtime=((double)(t_startdetector-t_pulsestart)/FCY)-Tpulse; // Save total deadtime used
+
+}
+
+void listenc(int Nlisten) {
+   
+    int32_t fre;
+    int j;
+    // Reset value counter
+    set_adc_buffer_valcnt(0);
+    // Reset "new_value" flag
+    set_new_sampl(FALSE);
+    int Nsamples_lastframe=0;
+    T2CONbits.TON = 0; // Disable sampling timer
+    IFS0bits.T2IF = 0; // Clear the timer interrupt status flag
+    IEC0bits.T2IE = 1; // Enable interrupt for Timer2
+    IPC2bits.T2IP = 1; // Set priority 1
+    T2CONbits.TCKPS = 0b000;
+
+    // Configure timer so that it will sample at Fs Hz
+    if ((Fs > FCY / 0xFFFF) && (Fs < FCY)) {
+        // Sampling close to MCU clock is risky because depending on the number 
+        // of clock cycles the interrupt takes, it might not be able to finish 
+        // before the next interrupt.
+        PR2 = (int) ((float) FCY / Fs);
+    } else {
+        printString("Can not sample lower than 0xFFFF Hz by only using the "
+                "period register PR2 for Timer2. Implement a function (here) "
+                "using the prescaler register "
+                "T2CONbits.TCKPS = 0bXXX; !");
+        printEL();
+    }
+
+    // Change some transistors on the board so that the transducer is connected
+    // to an input amplifier (converting the transducer into a hydrophone)
+    setTransducerToSensing();
+
+    ADCCON3bits.VREFSEL = 1;
+    ADCCON1bits.ON = 1;
+    ADCCSS1bits.CSS15 = 0; //AN15 (Class 3) quit scanning
+    ADCCSS1bits.CSS18 = 1; //AN18 (Class 3) set for scan
+    ADCCON3bits.GSWTRG = 1;
+
+    // Testing    
+    int Nframe=NFFT-2*Npulse; 
+    int framestart=Npulse;      // Start and end of the frame
+    int frameend=framestart+Nframe; // (last index is the value before this one)
+
+
+    // Get arrays for holding intermediate complex fixed-point data results 
+    // in the fft  
+    int32c* scratch32 = get_scratch32();
+    int32c* twiddles32 = get_twiddles32();
+    // Get arrays holding input time signal, and output frequency spectrum 
+    // of the reference signal
+    int32c* refsig_freq = get_refsig_freq();
+    // Create correlation holder   
+    int32c* ctime=get_ctime(); // ctime is the correlation in TD
+    int32c* cfreq=get_cfreq(); // FD correlation
+    // Create pointers for the reverse-unfolded buffer, and its freq response
+    int32c* buff_time;
+    int32c* buff_freq = get_buff_unf_freq();  
+    // Reset echo timeout
+    set_alg_timeout(0);
+    // Reset sampling timeout
+//    set_sampl_timeout(0);
+    int t0; int t1; int tdiff;
+    
+    T2CONbits.TON = 1; // Activate sampling timer 
+    //int16_t scaler=pow(2,INT_EXPONENT);
+// Storage variables
+    int storage_len=get_storage_vector_len();
+    if(Nlisten>storage_len){
+        Nlisten=storage_len;
+    }
+    int buff_index = 0;
+    int t_startdetector=TMR4;
+    int t_pulsestart=get_t_pulsestart();
+    while(buff_index<Nlisten){
+
+        // Check for detection timeout
+        if (get_alg_timeout() > timeout) {
+            // Timeout from no echo
+            IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+            T2CONbits.ON = 0; //stop pulse out timer
+            printMessage(MSG_TIMEOUT_DETECTION);
+            goto label_EndDetection;
+        }
+
+        // Wait for next sampled value
+        while (get_new_sampl() != 1) {
+            sampl_timeout_inc();
+            // Check for sampling timeout error
+            if (get_sampl_timeout_cnt() > timeout_sampl) {
+                // Timeout from sampling not working
+                IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+                T2CONbits.ON = 0; //stop pulse out timer
+                printMessage(MSG_TIMEOUT_SAMPLING);
+                goto label_EndDetection;
+            }
+            Nop();
+        }
+        set_new_sampl(FALSE);
+               
+       // When the NFFT:th value has been sampled, t_frame_end holds the time 
+       // when the last value was sampled
+       if(get_adc_buffer_valcnt()>=Nframe){
+             t0=TMR4;
+            // Keep track of how many values have been sampled while 
+            // detector is processing the last frame
+            set_adc_buffer_valcnt(0);
+
+            // Unfold buffer in reversed order
+            buff_time=fwunfold_bufftime_FFT(NFFT);
+
+            // FFT of buffer
+            DSP_TransformFFT32(buff_freq, buff_time, twiddles32, scratch32, LOG2NFFT);
+  
+            // Correlate
+            correlate(cfreq, refsig_freq, buff_freq, framestart, frameend);
+
+            // Inverse transform
+            DSP_TransformFFT32(ctime, cfreq, twiddles32, scratch32, LOG2NFFT);
+
+            // Go through recorded correlation points and check if any exceedances
+            for (j=framestart; j < frameend; j++) {
+                
+                // Drop the imaginary part of the correlation, and take absolute value
+                if(ctime[j].re>0){
+                    fre = (ctime[j].re);
+                }
+                else{
+                    fre = (-ctime[j].re);
+                }
+                insert_into_storage( fre );
+                // Value has been processed
+                buff_index++;
+                
+            }
+            t1=TMR4;   
+            tdiff=t1-t0;
+            Nsamples_lastframe=get_adc_buffer_valcnt();
+       }
+       
+    }
+    label_EndDetection:
+    IEC0bits.T2IE = 0; // Disable interrupt for Timer2
+    T2CONbits.ON = 0; //stop pulse out timer
+    
+    // Set execution time
+    double time=((double)tdiff)/FCY;
+    set_detector_extime(time);
+    time=((double)Nframe)/Fs;
+    set_t_frame(time);
+    deadtime=((double)(t_startdetector-t_pulsestart)/FCY)-Tpulse; // Save total deadtime used
+    printString("Nsamples: "); printInt(Nsamples_lastframe); printEL();
+    printString("Nframe: "); printInt(Nframe); printEL();
+    return;
+}
+*/
+
+int32_t get_mf_detector_thr(void){
+    return mf_detector_thr;
+}
+
+void set_mf_detector_thr(int32_t thr){
+    mf_detector_thr = thr;
+}
+
+void set_amp_detector_thr(int16_t thr){
+    amp_detector_thr=thr;
+}
+
+int get_trig_index(void){
+    return trig_index;
+}
+
+int get_trig_index_min(void){
+    return trig_index_min;
+}
+
+int get_trig_index_max(void){
+    return trig_index_max;
+}
+
+int32_t get_minthresh(void){
+    return minthresh;
+}
+void set_minthresh(int32_t minthr){
+    minthresh=minthr;
+}
+void set_thrscale_nom(int th){
+    thrscale_nom=th;
+}
+void set_thrscale_reverb(int th){
+    thrscale_reverb=th;
+}
+int get_thrscale_nom(void){
+    return thrscale_nom;
+}
+int get_thrscale_reverb(void){
+    return thrscale_reverb;
+}
